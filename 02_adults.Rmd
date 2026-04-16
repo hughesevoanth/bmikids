@@ -1,0 +1,328 @@
+---
+title: "Height and Weight"
+author: "David A Hughes"
+date: "2026-01-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(patchwork)
+library(cli)
+
+source("function/extract_formula.R")
+```
+
+
+## read in the data
+
+```{r}
+f = "../data/processed/nhanes_combined_data.csv"
+mydata = read_csv(f, show_col_types = FALSE)
+
+## Edits sex
+mydata = mydata |> mutate(sex = ifelse(sex == 1, "m", "f") )
+mydata = mydata |> mutate(sex = as.factor(sex))
+
+cli::cli_alert_info("Total individuals in dataset: {nrow(mydata)}")
+```
+
+
+## limit to adults / exclude kids
+
+```{r}
+adults = mydata |> filter(age >= 21) 
+cli::cli_alert_info("Total adults: {nrow(adults)}")
+```
+
+## Male Female Count
+
+```{r}
+cli::cli_alert_info("Number of females and males:")
+table(adults$sex)
+```
+
+
+## Ancestry / ethnicity composition
+
+```{r}
+cli::cli_alert_info("Ancestry composition:")
+table(adults$ethnicity)
+```
+
+### ethnicity codes 
+
+    - 1 = Mexican american, 
+    - 2 = other Hispanic, 
+    - 3 = non-Hispanic white, 
+    - 4 = non-Hispanic black, 
+    - 5 = other/multiracial
+
+
+
+## edit height from cm to m
+
+```{r}
+adults = adults |> mutate(height = height * 0.01)
+```
+
+
+## estimate w/h and w/h^2 (aka BMI) and height squared
+
+```{r}
+adults = adults |> mutate(wh = weight/height, wh2 = weight/height^2, height2 = height^2)
+```
+
+
+## estimate log10(height) and log10(weight)
+
+```{r}
+adults = adults |> mutate( log10_height = log10(height), log10_weight = log10(weight) )
+
+```
+
+
+## estimate sex-centered log10(height) and log10(weight)
+
+```{r}
+res_w <- residuals(lm(log10_weight ~ sex, data = adults))
+res_h <- residuals(lm(log10_height ~ sex, data = adults))
+
+# adults = adults |> mutate(log10_height_sc = res_h + mean(adults$log10_height),
+#                           log10_weight_sc = res_w + mean(adults$log10_weight) )
+
+adults = adults |> mutate(log10_height_sc = res_h ,
+                          log10_weight_sc = res_w  )
+
+```
+
+
+## log-log regressions
+
+### Adults no adjustment for sex
+
+```{r}
+fit0 = lm( log10_weight ~ log10_height, data = adults )
+cli::cli_alert_info("Model R squared: {round(summary(fit0)$r.squared, d = 4)}")
+
+cli::cli_alert_info("Model formula")
+extract_formula(fit0)
+```
+
+### Males only
+
+```{r}
+fitm = lm( log10_weight ~ log10_height, data = adults |> filter(sex == "m") )
+cli::cli_alert_info("Model R squared: {round(summary(fitm)$r.squared, d = 4)}")
+
+cli::cli_alert_info("Model formula")
+extract_formula(fitm)
+```
+
+### Females only
+
+```{r}
+fitf = lm( log10_weight ~ log10_height, data = adults |> filter(sex == "f") )
+cli::cli_alert_info("Model R squared: {round(summary(fitf)$r.squared, d = 4)}")
+
+cli::cli_alert_info("Model formula")
+
+extract_formula(fitf)
+```
+
+### Sex adjusted adults
+
+```{r}
+fit = lm( log10_weight ~ sex + log10_height, data = adults )
+ss = anova(fit)[,2]
+eta_sq = ss / sum(ss)
+names(eta_sq) = rownames(anova(fit))
+
+height_eta_sq = eta_sq["log10_height"]
+
+cli::cli_alert_info("Model R squared: {round( summary(fit)$r.sq, d = 4)}")
+cli::cli_alert_info("Partial R squared for height: {round(height_eta_sq, d = 4)}")
+
+cli::cli_alert_info("Model formula")
+extract_formula(fit)
+```
+
+## weight-height allometric model
+
+The multiplicative allometric model (of the log-log regression) is:
+
+```{r}
+## interecept
+intercept = summary(fit)$coefficients["(Intercept)", "Estimate"]
+alpha = round(10^intercept, d = 3)
+
+## sex coef
+sex_coef = summary(fit)$coefficients["sexm", "Estimate"]
+k = round(10^sex_coef, d = 3)
+
+## height coef also called beta
+beta = round( summary(fit)$coefficients["log10_height", "Estimate"] , d = 3)
+
+## back converted, multiplicative
+fit_multiplicative = paste0("weight = ", alpha, " * (", k, ")^sex * height^", beta )
+fit_multiplicative
+```
+
+
+
+
+## plot log-log regression with formula and R squared for height
+
+
+```{r}
+f = gsub("0\\s*\\+\\s*", "", extract_formula(fit))
+f = gsub("_", " ", f)
+f = gsub("  ", " ", f)
+
+rsq = paste0( "height partial R² = ",  round( height_eta_sq , d = 4) )
+
+
+F1_A = adults |> ggplot( aes(x = log10_height, y = log10_weight ) ) +
+  geom_point( alpha = 0.3, color = "grey40", size = 1.25 ) +
+  geom_smooth( method = "lm", color = "black", se = TRUE, formula = 'y ~ x' ) +
+  theme_bw() +
+  labs(x = "log10 height (m)", y = "log10 weight (kg)", 
+       #title = "Continuous NHANES adults (21+ years)",
+       subtitle = "log-log allometric model") +
+  annotate("text", x = 0.22, y = 1.48, label = f , size = 3.5, color = "black" ) +
+  annotate("text", x = 0.22, y = 1.42, label = rsq , size = 3.5, color = "black" )
+```
+
+## estimate prediction line given log-log regression for W vs H plot
+
+```{r}
+## Prediction : DEFINED ABOVE
+# alpha <- 27.932
+# beta  <- 2.0492
+# k <- 0.976  # multiplier when sex == "Male" (assuming female is reference)
+
+newdat <- expand.grid(
+  height = seq(min(adults$height, na.rm = TRUE),
+               max(adults$height, na.rm = TRUE),
+               length.out = 200),
+  sex = levels(adults$sex)
+)
+
+newdat$pred_W <- alpha * (newdat$height^beta) * ifelse(newdat$sex == "Male", k, 1)
+```
+
+
+
+```{r}
+F1_B = adults |> ggplot( aes(x = height, y = weight ) ) +
+  geom_point( alpha = 0.3, color = "grey40", size = 1.25 ) +
+  # geom_smooth( method = "lm", color = "blue", se = TRUE, formula = 'y ~ x' ) +
+  geom_line(data = newdat, aes(y = pred_W), linewidth = 1) +
+  theme_bw() +
+  labs(x = "height (m)", y = "weight (kg)", 
+       # title = "Continous NHANES adults (21+ years)",
+       subtitle = "weight-height allometric model") +
+  annotate("text", x = 1.8, y = 25, label = fit_multiplicative , size = 3.5, color = "black" ) 
+```
+
+
+```{r, fig.width = 6, fig.height = 10 }
+library(patchwork)
+fig1 = (F1_A / F1_B ) + plot_annotation(tag_levels = "A")
+
+pdf("../results/figure1.pdf", width = 6, height = 10)
+fig1
+dev.off()
+
+fig1
+```
+
+
+
+## sex-centered loq-log regression
+
+### Sex adjusted adults
+
+```{r}
+fitsc = lm( log10_weight ~ log10_height, data = adults |> 
+              dplyr::select(log10_weight_sc, log10_height_sc) |>
+              rename(log10_weight = log10_weight_sc,
+                     log10_height = log10_height_sc)
+            )
+
+## estiamte R squared
+rsq =  paste0( "R² = ",  round( summary(fitsc)$r.squared , d = 4) )
+cli::cli_alert_info("Model R squared: {rsq}")
+
+cli::cli_alert_info("Model formula")
+f = extract_formula(fitsc)
+```
+
+
+NOTE: the beta estimate is, as expected, the same. 
+
+
+### A plot of the sex centered log-log regression
+
+```{r}
+pdata = data.frame(log10_height = adults$log10_height_sc, 
+                   log10_weight = adults$log10_weight_sc ) 
+
+## remove the 0 intercept
+f = gsub("0\\s*\\+\\s*", "", extract_formula(fitsc))
+f = gsub("_", " ", f)
+
+pdata |> ggplot( aes(x = log10_height, y = log10_weight ) ) +
+  geom_point( alpha = 0.3, color = "grey40", size = 1.25 ) +
+  geom_smooth( method = "lm", color = "black", se = TRUE, formula = 'y ~ x' ) +
+  theme_bw() +
+  labs(x = "log10 height (m)", y = "log10 weight (kg)", 
+       title = "Continous NHANES adults (21+ years)", 
+       subtitle = "height and weight were sex-centered prior to log-log regression") +
+  annotate("text", x = 0.0325, y = -0.38, label = f , size = 4.5, color = "black" ) +
+  annotate("text", x = 0.0325, y = -0.45, label = rsq , size = 4.5, color = "black" )
+```
+
+
+## If log10(BMI) associates with log10(height) then Beta differs significantly from 2. 
+
+```{r}
+cli::cli_alert_info("No sex adjustment")
+fit_test0 = lm(log10(wh2) ~ log10(height), data = adults )
+summary(fit_test0)$coefficients
+
+cli::cli_alert_info("Sex adjustment")
+fit_test = lm(log10(wh2) ~ sex + log10(height), data = adults )
+a = anova(fit_test)
+eta_sq = a[,2] / sum(a[,2])
+
+summary(fit_test)$coefficients
+```
+
+
+## Does WSI with a beta of 2.05 associate with height ?
+
+```{r}
+adults = adults |> mutate( wsi = weight / height^2.05 )
+fit_wsi = lm(log10(wsi) ~ sex + log10(height), data = adults)
+a = anova(fit_wsi)
+eta_sq = a[,2] / sum(a[,2])
+
+summary(fit_wsi)$coefficients
+```
+
+## IS BMI associated with % body fat in adults?
+
+```{r}
+## Males
+fit_bmi_fat = lm( percent_fat ~  wh2, data = adults |> filter(sex == "m"))
+summary(fit_bmi_fat)
+```
+
+```{r}
+## Males
+fit_bmi_fat = lm( percent_fat ~  wh2, data = adults |> filter(sex == "f"))
+summary(fit_bmi_fat)
+```
+

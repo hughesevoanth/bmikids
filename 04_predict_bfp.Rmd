@@ -1,0 +1,392 @@
+---
+title: "Predict Percent Body Fat"
+author: "David A Hughes"
+date: "2026-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+kids2 <- kids %>%
+  mutate(
+    sex = factor(sex, levels = c("f", "m")),
+    log_height = log(height),
+    log_weight = log(weight)
+  ) %>%
+  filter(!is.na(percent_fat), !is.na(log_height), !is.na(log_weight), !is.na(age), !is.na(sex))
+
+```
+
+
+```{r}
+library(mgcv)
+library(tidyverse)
+
+####################################
+## 10-fold CV for GAM
+####################################
+set.seed(123)
+n         = nrow(kids2)
+fold_ids  = sample(rep(1:10, length.out = n))
+
+cv_results = vector("list", 10)
+
+for (k in 1:10) {
+  val_idx   = which(fold_ids == k)
+  train_idx = which(fold_ids != k)
+  
+  ## fit on training folds
+  fold_fit = gam(
+    percent_fat ~ sex + 
+                  s(age, by = sex, k = 12) + 
+                  te(log_height, log_weight, by = sex, k = c(10, 10)),
+    data   = kids2[train_idx, ],
+    method = "REML"
+  )
+  
+  ## predict on held-out fold
+  preds = predict(fold_fit, newdata = kids2[val_idx, ], type = "response")
+  obs   = kids2$percent_fat[val_idx]
+  sex   = kids2$sex[val_idx]
+  age   = kids2$age[val_idx]
+  
+  cv_results[[k]] = tibble(
+    fold    = k,
+    obs     = obs,
+    pred    = preds,
+    sex     = sex,
+    age     = age,
+    val_idx = val_idx
+  )
+}
+
+cv_df = bind_rows(cv_results)
+
+####################################
+## Overall CV metrics
+####################################
+cv_metrics = cv_df |>
+  summarise(
+    R2   = cor(obs, pred)^2,
+    MAE  = mean(abs(obs - pred)),
+    RMSE = sqrt(mean((obs - pred)^2))
+  )
+
+print(cv_metrics)
+
+####################################
+## CV metrics stratified by sex
+####################################
+cv_metrics_by_sex = cv_df |>
+  group_by(sex) |>
+  summarise(
+    R2   = cor(obs, pred)^2,
+    MAE  = mean(abs(obs - pred)),
+    RMSE = sqrt(mean((obs - pred)^2)),
+    n    = n()
+  )
+
+print(cv_metrics_by_sex)
+
+####################################
+## CV metrics stratified by sex and age
+####################################
+cv_metrics_by_age_sex = cv_df |>
+  group_by(sex, age) |>
+  summarise(
+    R2   = cor(obs, pred)^2,
+    MAE  = mean(abs(obs - pred)),
+    RMSE = sqrt(mean((obs - pred)^2)),
+    n    = n(),
+    .groups = "drop"
+  )
+
+####################################
+## Add CV predictions back to kids2
+####################################
+kids2 = kids2 |>
+  mutate(
+    pbf_cv_pred  = cv_df$pred[order(cv_df$val_idx)],
+    pbf_cv_resid = percent_fat - pbf_cv_pred
+  )
+
+
+```
+
+## Plots
+
+```{r, fig.width = 10, fig.height = 10}
+####################################
+## Plots
+####################################
+
+## 1. Overall observed vs predicted (CV)
+p1 = cv_df |>
+  ggplot(aes(x = obs, y = pred, color = sex)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotted", linewidth = 1.2) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  geom_smooth(method = "gam", formula = y ~ s(x), se = FALSE) +
+  scale_colour_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(x        = "observed % body fat",
+       y        = "predicted % body fat",
+       title    = "10-fold CV: observed vs predicted",
+       subtitle = paste0("R²: ",   round(cv_metrics$R2,   3),
+                         "  |  MAE: ",  round(cv_metrics$MAE,  2), "%",
+                         "  |  RMSE: ", round(cv_metrics$RMSE, 2), "%"))
+
+## 2. Residuals by age and sex (CV)
+p2 = cv_df |>
+  ggplot(aes(x = age, y = obs - pred, color = sex)) +
+  geom_hline(yintercept = 0, linetype = "dotted", linewidth = 1.2) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  geom_smooth(method = "gam", formula = y ~ s(x), se = TRUE) +
+  scale_colour_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(x     = "age (years)",
+       y     = "residual (obs - pred)",
+       title = "CV residuals by age and sex")
+
+## 3. MAE by age and sex
+p3 = cv_metrics_by_age_sex |>
+  ggplot(aes(x = age, y = MAE, color = sex)) +
+  geom_line(linewidth = 1) +
+  geom_point(aes(size = n)) +
+  scale_colour_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(x     = "age (years)",
+       y     = "MAE (% body fat)",
+       title = "CV MAE by age and sex",
+       size  = "n")
+
+p1 / (p2 | p3)
+
+```
+
+## Final Model
+
+```{r}
+####################################
+## Final model (fit on all data)
+## This is the model to deploy
+####################################
+fit_pbf_final = gam(
+  percent_fat ~ sex + 
+                s(age, by = sex, k = 12) + 
+                te(log_height, log_weight, by = sex, k = c(10, 10)),
+  data   = kids2,
+  method = "REML"
+)
+
+## save for use in Shiny app
+saveRDS(fit_pbf_final, "../../results/fit_pbf_final.rds")
+```
+
+
+## SHINY APP
+
+```{r}
+library(shiny)
+library(mgcv)
+library(tidyverse)
+
+## load the saved model
+fit_pbf_final = readRDS("fit_pbf_final.rds")
+
+ui = fluidPage(
+  titlePanel("Predicted % Body Fat in Children & Adolescents"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("sex",     "Sex",         choices = c("Female" = "f", "Male" = "m")),
+      numericInput("age",    "Age (years)", value = 10,  min = 2,   max = 18,  step = 1),
+      numericInput("height", "Height (m)", value = 1.40, min = 0.50, max = 2.20, step = 0.01),
+      numericInput("weight", "Weight (kg)", value = 35, min = 5, max = 200, step = 0.5),
+      radioButtons("ci_level", "Prediction interval level",
+             choices  = c("25%" = 0.25, "50%" = 0.50, "75%" = 0.75, "95%" = 0.95),
+             selected = 0.95,
+             inline   = TRUE),
+      actionButton("predict_btn", "Predict", class = "btn-primary")
+    ),
+    mainPanel(
+      h3("Predicted % Body Fat"),
+      tableOutput("pred_table"),
+      plotOutput("pred_plot", height = "300px"),
+      br(),
+      p(em("Prediction is based on a GAM fitted to NHANES data using sex, age,
+            height, and weight. The prediction interval reflects uncertainty in
+            where an individual observation is likely to fall, not just uncertainty
+            in the mean. For reference purposes only."))
+    )
+  )
+)
+
+server = function(input, output, session) {
+  
+  result = eventReactive(input$predict_btn, {
+    
+    new_data = tibble(
+      sex        = factor(input$sex, levels = c("f", "m")),
+      age        = as.numeric(input$age),
+      log_height = log(as.numeric(input$height)),   ## now metres, matches training
+      log_weight = log(as.numeric(input$weight))
+    )
+    
+    pred_obj = predict(fit_pbf_final, newdata = new_data,
+                       type = "response", se.fit = TRUE)
+    
+    fit   = as.numeric(pred_obj$fit)
+    se    = as.numeric(pred_obj$se.fit)
+    sigma = sqrt(fit_pbf_final$sig2)
+    se_pred = sqrt(se^2 + sigma^2)
+    
+    ## build one row per selected interval level
+    levels_selected = as.numeric(input$ci_level)
+    
+    interval_df = purrr::map_dfr(levels_selected, function(lvl) {
+      z = qnorm(1 - (1 - lvl) / 2)
+      tibble(
+        level    = lvl,
+        fit      = round(fit, 1),
+        ci_lower = round(fit - z * se,      1),
+        ci_upper = round(fit + z * se,      1),
+        pi_lower = round(fit - z * se_pred, 1),
+        pi_upper = round(fit + z * se_pred, 1)
+      )
+    }) |> arrange(level)
+    
+    interval_df
+  })
+    
+  output$pred_table = renderTable({
+    r = result()
+    
+    df = tibble(
+      predicted = paste0(r$fit,      "%"),
+      ci_lower  = paste0(r$ci_lower, "%"),
+      ci_upper  = paste0(r$ci_upper, "%"),
+      pi_lower  = paste0(r$pi_lower, "%"),
+      pi_upper  = paste0(r$pi_upper, "%")
+    )
+    
+    names(df) = c(
+      "Predicted % fat",
+      paste0(round(r$ci * 100), "% CI lower"),
+      paste0(round(r$ci * 100), "% CI upper"),
+      paste0(round(r$ci * 100), "% PI lower"),
+      paste0(round(r$ci * 100), "% PI upper")
+    )
+    
+    df
+  })
+  
+  output$pred_plot = renderPlot({
+    r = result()
+    
+    out_of_range = any(r$fit < 0 | r$fit > 60)
+    fit_val      = r$fit[1]   ## same for all rows
+    
+    ## one row per interval level, CI and PI overlaid on the same row
+    p = ggplot() +
+      ## PI rectangle (wider, lighter)
+      geom_rect(data = r,
+                aes(xmin = pmax(pi_lower, 0), xmax = pmin(pi_upper, 70),
+                    ymin = as.numeric(factor(level)) - 0.3,
+                    ymax = as.numeric(factor(level)) + 0.3,
+                    fill = "Prediction Interval"),
+                alpha = 0.15) +
+      ## CI rectangle (narrower, darker, overlaid)
+      geom_rect(data = r,
+                aes(xmin = pmax(ci_lower, 0), xmax = pmin(ci_upper, 70),
+                    ymin = as.numeric(factor(level)) - 0.18,
+                    ymax = as.numeric(factor(level)) + 0.18,
+                    fill = "Confidence Interval"),
+                alpha = 0.35) +
+      ## PI whisker line
+      geom_segment(data = r,
+                   aes(x = pmax(pi_lower, 0), xend = pmin(pi_upper, 70),
+                       y = as.numeric(factor(level)),
+                       yend = as.numeric(factor(level)),
+                       color = "Prediction Interval"),
+                   linewidth = 1) +
+      ## CI whisker line
+      geom_segment(data = r,
+                   aes(x = pmax(ci_lower, 0), xend = pmin(ci_upper, 70),
+                       y = as.numeric(factor(level)),
+                       yend = as.numeric(factor(level)),
+                       color = "Confidence Interval"),
+                   linewidth = 1.5) +
+      ## point estimate dot
+      geom_point(data = r,
+                 aes(x = fit, y = as.numeric(factor(level))),
+                 color = "black", size = 4, zorder = 5) +
+      ## point estimate label (top row only, to avoid repetition)
+      geom_text(data = r |> filter(level == max(level)),
+                aes(x = fit, y = as.numeric(factor(level)) + 0.45,
+                    label = paste0("Predicted: ", fit, "%")),
+                size = 4.5, fontface = "bold") +
+      ## PI lower bound labels
+      geom_text(data = r,
+                aes(x = pmax(pi_lower, 0),
+                    y = as.numeric(factor(level)) - 0.42,
+                    label = paste0(pi_lower, "%"),
+                    color = "Prediction Interval"),
+                size = 3.2, show.legend = FALSE) +
+      ## PI upper bound labels
+      geom_text(data = r,
+                aes(x = pmin(pi_upper, 70),
+                    y = as.numeric(factor(level)) - 0.42,
+                    label = paste0(pi_upper, "%"),
+                    color = "Prediction Interval"),
+                size = 3.2, show.legend = FALSE) +
+      ## CI lower bound labels
+      # geom_text(data = r,
+      #           aes(x = pmax(ci_lower, 0),
+      #               y = as.numeric(factor(level)) + 0.42,
+      #               label = paste0(ci_lower, "%"),
+      #               color = "Confidence Interval"),
+      #           size = 3.2, show.legend = FALSE) +
+      # ## CI upper bound labels
+      # geom_text(data = r,
+      #           aes(x = pmin(ci_upper, 70),
+      #               y = as.numeric(factor(level)) + 0.42,
+      #               label = paste0(ci_upper, "%"),
+      #               color = "Confidence Interval"),
+      #           size = 3.2, show.legend = FALSE) +
+      scale_x_continuous(limits = c(0, 70),
+                         labels = function(x) paste0(x, "%")) +
+      scale_y_continuous(breaks = seq_along(unique(r$level)),
+                         labels = paste0(sort(unique(r$level)) * 100, "%")) +
+      scale_fill_manual(values  = c("Prediction Interval" = "steelblue",
+                                    "Confidence Interval" = "tomato")) +
+      scale_color_manual(values = c("Prediction Interval" = "steelblue",
+                                    "Confidence Interval" = "tomato")) +
+      theme_bw() +
+      theme(legend.position    = "bottom",
+            legend.title       = element_blank(),
+            axis.title.y       = element_blank(),
+            axis.ticks.y       = element_blank(),
+            panel.grid.minor   = element_blank(),
+            panel.grid.major.y = element_blank()) +
+      labs(x     = "% body fat",
+           title = "Confidence and prediction intervals by level")
+    
+    if (out_of_range) {
+      p = p +
+        annotate("text", x = 35, y = max(as.numeric(factor(r$level))) + 0.7,
+                 label = "⚠️ prediction may be unreliable — inputs outside training range",
+                 color = "darkorange", size = 4, fontface = "bold")
+    }
+    
+    p
+  })
+  
+}
+
+
+shinyApp(ui, server)
+```
+
