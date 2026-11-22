@@ -1,4 +1,7 @@
 # BMI in Kids Review: analysis code
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![R ≥ 4.6](https://img.shields.io/badge/R-%E2%89%A5%204.6-276DC3?logo=r)
+[![renv](https://img.shields.io/badge/packages-renv.lock-blue)](renv.lock)
 
 Code to reproduce every figure, Table 2, every number quoted in the text, and the figure
 source data for:
