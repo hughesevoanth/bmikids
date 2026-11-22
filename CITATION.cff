@@ -1,0 +1,59 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite it as below, and cite the accompanying article."
+type: software
+title: "Code for: Body Mass Index: Mathematical Foundation of the World's Most Widely Used Adiposity Index in Pediatrics"
+abstract: >-
+  R pipeline that reproduces every figure, Table 2, every number quoted in the text, and the
+  figure source data for a review of the mathematics of body mass index (BMI) in pediatrics.
+  It downloads public NHANES 1999–2023 files and the CDC 2022 BMI-for-age reference, estimates
+  age- and sex-specific weight–height allometric exponents, the height–body fat association,
+  and the stability of body composition at fixed BMI across the life course (DXA, NHANES
+  1999–2006 and 2011–2016).
+authors:
+  - given-names: Christian
+    family-names: Rodriguez
+    affiliation: "Pennington Biomedical Research Center, Louisiana State University System, Baton Rouge, LA, USA"
+  - given-names: David A.
+    family-names: Hughes
+    affiliation: "Pennington Biomedical Research Center, Louisiana State University System, Baton Rouge, LA, USA"
+    orcid: "https://orcid.org/0000-0002-9644-8998"
+  - given-names: Sri Lakshmi S.
+    family-names: Devarakonda
+    affiliation: "Pennington Biomedical Research Center, Louisiana State University System, Baton Rouge, LA, USA"
+    orcid: "https://orcid.org/0000-0001-8758-7227"
+  - given-names: Shengping
+    family-names: Yang
+    affiliation: "Pennington Biomedical Research Center, Louisiana State University System, Baton Rouge, LA, USA"
+    orcid: "https://orcid.org/0000-0001-6298-6301"
+  - given-names: Diana M.
+    family-names: Thomas
+    affiliation: "Department of Mathematical Sciences, United States Military Academy, West Point, NY, USA"
+  - given-names: Angelo
+    family-names: Pietrobelli
+    affiliation: "Verona University Medical School, Verona, Italy"
+  - given-names: Steven B.
+    family-names: Heymsfield
+    affiliation: "Pennington Biomedical Research Center, Louisiana State University System, Baton Rouge, LA, USA"
+    orcid: "https://orcid.org/0000-0003-1127-9425"
+repository-code: "https://github.com/hughesevoanth/bmikids"
+license: MIT
+version: 1.0.0
+keywords:
+  - body mass index
+  - pediatrics
+  - obesity
+  - allometry
+  - body composition
+  - DXA
+  - NHANES
+  - growth charts
+  - R
+  - reproducible research
+# After publication, add the article so GitHub's "Cite this repository" points to it:
+# preferred-citation:
+#   type: article
+#   authors: (same list as above)
+#   title: "Body Mass Index: Mathematical Foundation of the World's Most Widely Used Adiposity Index in Pediatrics"
+#   journal: "<journal>"
+#   year: <year>
+#   doi: "<article DOI>"
