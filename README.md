@@ -2,6 +2,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![R ≥ 4.6](https://img.shields.io/badge/R-%E2%89%A5%204.6-276DC3?logo=r)
 [![renv](https://img.shields.io/badge/packages-renv.lock-blue)](renv.lock)
+[![DOI](https://zenodo.org/badge/1212601345.svg)](https://doi.org/10.5281/zenodo.24431480)
+
 
 Code to reproduce every figure, Table 2, every number quoted in the text, and the figure
 source data for:
@@ -9,6 +11,11 @@ source data for:
 > Rodriguez C, Hughes DA, Devarakonda SLS, Yang S, Thomas DM, Pietrobelli A, Heymsfield SB.
 > **Body Mass Index: Mathematical Foundation of the World's Most Widely Used Adiposity Index in Pediatrics.**
 > *(journal, year, DOI to be added)*
+
+**Citing the code:** Rodriguez C, Hughes DA, Devarakonda SLS, Yang S, Thomas DM, Pietrobelli A,
+Heymsfield SB. *Code for: Body Mass Index: Mathematical Foundation of the World's Most Widely Used
+Adiposity Index in Pediatrics.* Zenodo. https://doi.org/10.5281/zenodo.24431480
+(this DOI always resolves to the latest release; see `CITATION.cff` or GitHub's "Cite this repository").
 
 Code: David A Hughes (david.hughes@pbrc.edu), Pennington Biomedical Research Center.
 
