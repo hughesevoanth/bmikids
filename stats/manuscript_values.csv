@@ -1,0 +1,81 @@
+key,manuscript_location,quoted_value,source_script
+n_adults,Adults para. 1; Fig 1 and Fig 9 legends,56138,01_data_wrangling
+n_youth,Impact; Table 2 title; Fig 3 and 7 legends,40575,01_data_wrangling
+n_youth_dxa_f,"Fig 5 and Fig 6 legends (also Fig 2, 8, 9 legends: 15,756 youth with DXA)",7079,01_data_wrangling
+n_youth_dxa_m,Fig 5 and Fig 6 legends,8677,01_data_wrangling
+adult_beta_sexadj,Adults para. 1 (beta = 2.05),2.05,02_adults
+adult_beta_sexadj_3dp,Fig 1 legend and panel (W/H^2.049),2.052,02_adults
+adult_fig1_intercept,Fig 1A equation (log10 W = 1.446 ...),1.446,02_adults
+adult_fig1_sex_coef,Fig 1A equation (− 0.011 × sex M),-0.011,02_adults
+adult_fig1_alpha,Fig 1B equation (W = 27.93 ...),27.93,02_adults
+adult_fig1_k,Fig 1B equation ((0.976)^sex),0.975,02_adults
+adult_bmi_height_b,Adults para. 1 (W/H² on height after sex: beta),0.052,02_adults
+adult_bmi_height_se,Adults para. 1 (SE),0.021,02_adults
+adult_bmi_height_p,Adults para. 1 (p),0.012,02_adults
+adult_bmi_height_dr2_pct,Adults para. 1 (ΔR² = 0.01%),0.01,02_adults
+adult_pbf25_m_2129,Compositional para. 1 (males 20s at BMI 25),23.8,02_adults
+adult_pbf25_m_70,Compositional para. 1 (males 70+),29.2,02_adults
+adult_pbf25_m_delta,Compositional para. 1 (+5.5),5.5,02_adults
+adult_pbf25_f_2129,Compositional para. 1 (females 20s),36.4,02_adults
+adult_pbf25_f_70,Compositional para. 1 (females 70+),40.6,02_adults
+adult_pbf25_f_delta,Compositional para. 1 (+4.1),4.1,02_adults
+adult_drift_range_min,"Compositional para. 1 (ranging from 0.07 to 0.11 pp/y at reference BMIs 20–35; lower)",0.07,04_kids_and_adults
+adult_drift_range_max,"Compositional para. 1 (ranging from 0.07 to 0.11 pp/y at reference BMIs 20–35; upper)",0.11,04_kids_and_adults
+box_adult_drift,"Box, adults bullet (~0.1 pp per year)",0.1,04_kids_and_adults
+youth_beta_age11,Stable scaling para. 2; Fig 4 legend (β = 3.68 at 11),3.67,03_kids
+box_beta_age2,Box (β ~2.2 at age 2),2.2,03_kids
+box_beta_peak_min,Box (3.5–3.7 at ages 8–11; lower),3.5,03_kids
+box_beta_peak_max,Box (3.6–3.7 at ages 8–11; upper),3.7,03_kids
+box_beta_16_20_min,Box (2.0–2.3 by ages 16–20; lower),2.0,03_kids
+box_beta_16_20_max,Box (2.1–2.3 by ages 16–20; upper),2.3,03_kids
+youth_r_bmi_height_f7,"Stable scaling para. 1 (r = 0.425, females age 7)",0.428,03_kids
+youth_r_bmi_height_m8,"Stable scaling para. 1 (r = 0.445, males age 8)",0.446,03_kids
+bias_age11_plus10,Fig 4 legend; Box (+10% height → ~17%),17,03_kids
+bias_age11_minus10,Fig 4 legend (−10% height → ~−16%),-16,03_kids
+box_partial_r_8_11_min,Box (sex-adjusted r ≈ 0.17–0.31 at 8–11; lower),0.17,03_kids
+box_partial_r_8_11_max,Box (sex-adjusted r ≈ 0.17–0.31 at 8–11; upper),0.31,03_kids
+youth_pbf25_m8,"Compositional para. 2 (males age 8, BMI 25)",40.3,03_kids
+youth_pbf25_m20,Compositional para. 2 (males age 20),22.4,03_kids
+youth_pbf25_m_delta,Compositional para. 2 (−18 pp),-18,03_kids
+youth_pbf25_f8,Compositional para. 2 (females age 8),41.5,03_kids
+youth_pbf25_f20,Compositional para. 2 (females age 20),35.7,03_kids
+youth_pbf25_f_delta,Compositional para. 2 (−5.6),-5.7,03_kids
+box_pbf25_age8,"Box (~41% at age 8, both sexes)",41,03_kids
+box_pbf25_f_1920,Box (~36% in girls by 19–20),36,03_kids
+box_pbf25_m_1920,Box (~22% in boys by 19–20),22,03_kids
+youth_bmi_change_8_20_f,"Compositional para. 3 (mean BMI +7.7, girls)",7.7,03_kids
+youth_bmi_change_8_20_m,"Compositional para. 3 (mean BMI +7.6, boys)",7.6,03_kids
+youth_pbf_change_8_20_f,"Compositional para. 3 (mean %BF +4.1, girls)",4.1,03_kids
+youth_pbf_change_8_20_m,"Compositional para. 3 (mean %BF decreases by 4, boys)",-4,03_kids
+fig9_boys_bmi_age8,Fig 9 legend (boys' BMI ~18 at 8),18,03_kids
+fig9_boys_bmi_age20,Fig 9 legend (boys' BMI ~26 at 20),26,03_kids
+fig6_r_bmi_benn,"Fig 6 legend (r = 0.74, BMI − Benn)",0.74,03_kids
+fig6_r_tmi_benn,"Fig 6 legend (r = 0.90, TMI − Benn)",0.90,03_kids
+fig10_n_above_43,Fig 10 legend (115 children above 43 kg/m²),115,03_kids
+fig10_pct_above_43,Fig 10 legend (0.57%),0.57,03_kids
+fig11_L_max,Fig 11 legend (L about −1),-1,03_kids
+fig11_L_min,Fig 11 legend (L about −3.4),-3.4,03_kids
+z_bmi_1,z-score para. (BMI 20.1),20.1,03_kids
+z_bmi_2,z-score para. (BMI 24.9),24.9,03_kids
+z_bmi_3,z-score para. (BMI 30.2),30.2,03_kids
+z_bmi_4,z-score para. (BMI 34.9),34.9,03_kids
+z_bmi_5,z-score para. (BMI 45.6),45.6,03_kids
+z_bmi_6,z-score para. (BMI 50.3),50.3,03_kids
+z_1,z-score para. (z = 1.44),1.44,03_kids
+z_2,z-score para. (z = 2.17),2.17,03_kids
+z_3,z-score para. (z = 2.54),2.54,03_kids
+z_4,z-score para. (z = 2.71),2.71,03_kids
+z_5,z-score para. (z = 2.87),2.87,03_kids
+z_6,z-score para. (z = 2.91),2.91,03_kids
+z_diff_healthy,z-score para. (difference 0.73),0.73,03_kids
+z_diff_obese,z-score para. (difference 0.17),0.17,03_kids
+z_diff_severe,z-score para. (difference 0.04),0.04,03_kids
+z_max_age9,z-score para. (maximum z = 3.01 at age 9),3.01,03_kids
+drift_youth_m,"Compositional para. 2 (−1.69 pp/y, males)",-1.69,04_kids_and_adults
+drift_adult_m,"Compositional para. 2 (+0.094 pp/y, males)",0.096,04_kids_and_adults
+drift_fold_m,Compositional para. 2; Summary (18-fold),18,04_kids_and_adults
+drift_youth_f,"Compositional para. 2 (−0.45 pp/y, females)",-0.45,04_kids_and_adults
+drift_adult_f,"Compositional para. 2 (+0.079 pp/y, females)",0.079,04_kids_and_adults
+drift_fold_f,Compositional para. 2; Summary (5.7-fold),5.7,04_kids_and_adults
+impact_youth_drift_max,Impact; Box (up to 1.8 pp/y in boys),1.8,04_kids_and_adults
+impact_adult_drift,Impact; Box (~0.1 in adults),0.1,04_kids_and_adults

@@ -1,328 +1,252 @@
 ---
-title: "Height and Weight"
+title: "Adults: weight–height scaling, height–fat independence and compositional stability"
 author: "David A Hughes"
-date: "2026-01-06"
-output: html_document
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(tidyverse)
-library(patchwork)
-library(cli)
+<!--
+---- File Metadata ----
+Title: 02_adults.Rmd — adult-only analyses and in-text statistics
+Author: David A Hughes
+Email: david.hughes@pbrc.edu
+Date: 20 Nov 2026
+Version: 2.0
 
-source("function/extract_formula.R")
+Input : data/derived/adults.rds (from 01_data_wrangling.R)
+Output: data/derived/res_fig1.rds        Figure 1 lines, labels and binned counts
+        data/derived/res_adult_strata.rds adult decade estimates for Figure 2 (A–C)
+        data/derived/res_adult_curves.rds sex-specific %BF ~ BMI curves (Figure 8A, drift)
+        results/stats/reproduced_02_adults.csv
+-->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+source("R/setup.R")
 ```
 
+## Read in the data
 
-## read in the data
+All adults (≥ 21 y) with valid height and weight. DXA analyses use the subset with a complete scan.
 
 ```{r}
-f = "../data/processed/nhanes_combined_data.csv"
-mydata = read_csv(f, show_col_types = FALSE)
+adults     <- read_result("adults")
+adults_dxa <- adults |> filter(has_dxa)
 
-## Edits sex
-mydata = mydata |> mutate(sex = ifelse(sex == 1, "m", "f") )
-mydata = mydata |> mutate(sex = as.factor(sex))
-
-cli::cli_alert_info("Total individuals in dataset: {nrow(mydata)}")
+cli::cli_alert_info("Adults: {nrow(adults)}; with DXA: {nrow(adults_dxa)}")
+record_stat("n_adults", nrow(adults))
 ```
 
+### Sex and ancestry composition
 
-## limit to adults / exclude kids
+Ethnicity codes (RIDRETH1): 1 = Mexican American, 2 = Other Hispanic, 3 = non-Hispanic White,
+4 = non-Hispanic Black, 5 = Other/multiracial.
 
 ```{r}
-adults = mydata |> filter(age >= 21) 
-cli::cli_alert_info("Total adults: {nrow(adults)}")
+adults |> count(sex) |> knitr::kable()
+adults |> count(ethnicity) |> mutate(pct = round(100 * n / sum(n), 1)) |> knitr::kable()
 ```
 
-## Male Female Count
+## Log–log regressions of weight on height
+
+The slope of log₁₀W on log₁₀H is the allometric exponent β (Table 1, Equation 3).
+
+### No adjustment for sex
 
 ```{r}
-cli::cli_alert_info("Number of females and males:")
-table(adults$sex)
-```
-
-
-## Ancestry / ethnicity composition
-
-```{r}
-cli::cli_alert_info("Ancestry composition:")
-table(adults$ethnicity)
-```
-
-### ethnicity codes 
-
-    - 1 = Mexican american, 
-    - 2 = other Hispanic, 
-    - 3 = non-Hispanic white, 
-    - 4 = non-Hispanic black, 
-    - 5 = other/multiracial
-
-
-
-## edit height from cm to m
-
-```{r}
-adults = adults |> mutate(height = height * 0.01)
-```
-
-
-## estimate w/h and w/h^2 (aka BMI) and height squared
-
-```{r}
-adults = adults |> mutate(wh = weight/height, wh2 = weight/height^2, height2 = height^2)
-```
-
-
-## estimate log10(height) and log10(weight)
-
-```{r}
-adults = adults |> mutate( log10_height = log10(height), log10_weight = log10(weight) )
-
-```
-
-
-## estimate sex-centered log10(height) and log10(weight)
-
-```{r}
-res_w <- residuals(lm(log10_weight ~ sex, data = adults))
-res_h <- residuals(lm(log10_height ~ sex, data = adults))
-
-# adults = adults |> mutate(log10_height_sc = res_h + mean(adults$log10_height),
-#                           log10_weight_sc = res_w + mean(adults$log10_weight) )
-
-adults = adults |> mutate(log10_height_sc = res_h ,
-                          log10_weight_sc = res_w  )
-
-```
-
-
-## log-log regressions
-
-### Adults no adjustment for sex
-
-```{r}
-fit0 = lm( log10_weight ~ log10_height, data = adults )
-cli::cli_alert_info("Model R squared: {round(summary(fit0)$r.squared, d = 4)}")
-
-cli::cli_alert_info("Model formula")
+fit0 <- lm(log10_weight ~ log10_height, data = adults)
+cli::cli_alert_info("R² = {round(summary(fit0)$r.squared, 4)}")
 extract_formula(fit0)
 ```
 
-### Males only
+### Females and males separately
 
 ```{r}
-fitm = lm( log10_weight ~ log10_height, data = adults |> filter(sex == "m") )
-cli::cli_alert_info("Model R squared: {round(summary(fitm)$r.squared, d = 4)}")
+fit_by_sex <- adults |>
+  group_by(sex) |>
+  group_map(~ lm(log10_weight ~ log10_height, data = .x), .keep = TRUE) |>
+  set_names(levels(adults$sex))
 
-cli::cli_alert_info("Model formula")
-extract_formula(fitm)
+iwalk(fit_by_sex, function(m, s) {
+  cli::cli_alert_info("{s}: R² = {round(summary(m)$r.squared, 4)}")
+  extract_formula(m)
+})
 ```
 
-### Females only
+### Sex-adjusted (the model used in Figure 1 and the text)
+
+ΔR² is the share of variance in log₁₀W explained by height after sex (sequential sums of squares).
 
 ```{r}
-fitf = lm( log10_weight ~ log10_height, data = adults |> filter(sex == "f") )
-cli::cli_alert_info("Model R squared: {round(summary(fitf)$r.squared, d = 4)}")
+fit <- lm(log10_weight ~ sex + log10_height, data = adults)
 
-cli::cli_alert_info("Model formula")
-
-extract_formula(fitf)
-```
-
-### Sex adjusted adults
-
-```{r}
-fit = lm( log10_weight ~ sex + log10_height, data = adults )
-ss = anova(fit)[,2]
-eta_sq = ss / sum(ss)
-names(eta_sq) = rownames(anova(fit))
-
-height_eta_sq = eta_sq["log10_height"]
-
-cli::cli_alert_info("Model R squared: {round( summary(fit)$r.sq, d = 4)}")
-cli::cli_alert_info("Partial R squared for height: {round(height_eta_sq, d = 4)}")
-
-cli::cli_alert_info("Model formula")
+beta_adult <- coef(fit)[["log10_height"]]
+cli::cli_alert_info("R² = {round(summary(fit)$r.squared, 4)}; ΔR² for height = {round(delta_r2_last(fit), 4)}")
 extract_formula(fit)
+
+record_stat("adult_beta_sexadj",     beta_adult)
+record_stat("adult_beta_sexadj_3dp", beta_adult)
+record_stat("adult_fig1_intercept",  coef(fit)[["(Intercept)"]])
+record_stat("adult_fig1_sex_coef",   coef(fit)[["sexMales"]])
 ```
 
-## weight-height allometric model
+### Multiplicative (back-transformed) form
 
-The multiplicative allometric model (of the log-log regression) is:
+W = α × k^sex × H^β, with α = 10^intercept and k = 10^(sex coefficient); sex = 1 for males.
 
 ```{r}
-## interecept
-intercept = summary(fit)$coefficients["(Intercept)", "Estimate"]
-alpha = round(10^intercept, d = 3)
+alpha_adult <- 10^coef(fit)[["(Intercept)"]]
+k_adult     <- 10^coef(fit)[["sexMales"]]
 
-## sex coef
-sex_coef = summary(fit)$coefficients["sexm", "Estimate"]
-k = round(10^sex_coef, d = 3)
+record_stat("adult_fig1_alpha", alpha_adult)
+record_stat("adult_fig1_k",     k_adult)
 
-## height coef also called beta
-beta = round( summary(fit)$coefficients["log10_height", "Estimate"] , d = 3)
-
-## back converted, multiplicative
-fit_multiplicative = paste0("weight = ", alpha, " * (", k, ")^sex * height^", beta )
-fit_multiplicative
+sprintf("W = %.2f × (%.3f)^sex × H^%.3f", alpha_adult, k_adult, beta_adult)
 ```
 
+## Is BMI independent of height in adults?
 
-
-
-## plot log-log regression with formula and R squared for height
-
+If β were exactly 2, log₁₀BMI would not depend on log₁₀H. The slope here equals β − 2.
 
 ```{r}
-f = gsub("0\\s*\\+\\s*", "", extract_formula(fit))
-f = gsub("_", " ", f)
-f = gsub("  ", " ", f)
+fit_bmi_h <- lm(log10(bmi) ~ sex + log10_height, data = adults)
+s_bmi_h   <- summary(fit_bmi_h)$coefficients["log10_height", ]
+s_bmi_h
 
-rsq = paste0( "height partial R² = ",  round( height_eta_sq , d = 4) )
-
-
-F1_A = adults |> ggplot( aes(x = log10_height, y = log10_weight ) ) +
-  geom_point( alpha = 0.3, color = "grey40", size = 1.25 ) +
-  geom_smooth( method = "lm", color = "black", se = TRUE, formula = 'y ~ x' ) +
-  theme_bw() +
-  labs(x = "log10 height (m)", y = "log10 weight (kg)", 
-       #title = "Continuous NHANES adults (21+ years)",
-       subtitle = "log-log allometric model") +
-  annotate("text", x = 0.22, y = 1.48, label = f , size = 3.5, color = "black" ) +
-  annotate("text", x = 0.22, y = 1.42, label = rsq , size = 3.5, color = "black" )
+record_stat("adult_bmi_height_b",       s_bmi_h[["Estimate"]])
+record_stat("adult_bmi_height_se",      s_bmi_h[["Std. Error"]])
+record_stat("adult_bmi_height_p",       s_bmi_h[["Pr(>|t|)"]])
+record_stat("adult_bmi_height_dr2_pct", 100 * delta_r2_last(fit_bmi_h), "ΔR² as a percentage")
 ```
 
-## estimate prediction line given log-log regression for W vs H plot
+## Figure 1 inputs: fitted lines and binned counts
+
+Panel A shows the log–log model and panel B the back-transformed model, both from the
+sex-adjusted fit. Because sex shifts α but not β, there is one line per sex: parallel on the
+log scale and proportional on the original scale.
+
+The source data are aggregate: each panel is summarised as counts in a fine 2-D grid. The
+individual points are drawn by `figures/fig01_adult_allometry.R` straight from `adults.rds`.
 
 ```{r}
-## Prediction : DEFINED ABOVE
-# alpha <- 27.932
-# beta  <- 2.0492
-# k <- 0.976  # multiplier when sex == "Male" (assuming female is reference)
+### Figure 1A/B: prediction lines from the sex-adjusted model
+fig1_lines <- expand_grid(sex    = factor(levels(adults$sex), levels = levels(adults$sex)),
+                          height_m = seq(min(adults$height_m), max(adults$height_m), length.out = 200)) |>
+  mutate(log10_height = log10(height_m),
+         log10_weight = predict(fit, newdata = pick(everything())),
+         weight_kg    = 10^log10_weight)                      # conditional median weight
 
-newdat <- expand.grid(
-  height = seq(min(adults$height, na.rm = TRUE),
-               max(adults$height, na.rm = TRUE),
-               length.out = 200),
-  sex = levels(adults$sex)
+### Figure 1A/B: binned counts (source data only)
+bin_counts <- function(x, y, wx, wy) {
+  tibble(x = wx * (floor(x / wx) + 0.5), y = wy * (floor(y / wy) + 0.5)) |>
+    count(x, y, name = "n")
+}
+fig1_bins <- bind_rows(
+  bin_counts(adults$log10_height, adults$log10_weight, 0.005, 0.01) |> mutate(panel = "A"),
+  bin_counts(adults$height_m,     adults$weight_kg,    0.01,  2)    |> mutate(panel = "B")
 )
 
-newdat$pred_W <- alpha * (newdat$height^beta) * ifelse(newdat$sex == "Male", k, 1)
+### Equation labels, built from the model (ggtext markup)
+fig1_labels <- list(
+  A = extract_formula(fit, outcome_label = "log<sub>10</sub> W",
+                      labels = c(sexMales = "sex M", log10_height = "log<sub>10</sub> H"),
+                      print = FALSE),
+  B = sprintf("W = %.2f × (%.3f)<sup>sex</sup> × H<sup>%.3f</sup>",
+              alpha_adult, k_adult, beta_adult)
+)
+fig1_labels
+
+save_result(list(lines = fig1_lines, bins = fig1_bins, labels = fig1_labels,
+                 n = nrow(adults)), "res_fig1")
 ```
 
+For comparison: the v1 Figure 1A line was `geom_smooth(method = "lm")`, i.e. the
+**unadjusted** fit `fit0` (slope `r round(coef(fit0)[["log10_height"]], 3)`). The equation
+printed on the panel was the sex-adjusted fit (slope `r round(beta_adult, 3)`). v2 draws the
+sex-adjusted lines so that the line and the equation agree (DISCREPANCIES B2).
 
+## Adult strata for Figure 2
+
+Decades 21–29 … 60–69 and 70+. Every estimate is adjusted for sex. Points are plotted at the
+median age of each stratum.
+
+### Figure 2A (adults): allometric exponent by age
 
 ```{r}
-F1_B = adults |> ggplot( aes(x = height, y = weight ) ) +
-  geom_point( alpha = 0.3, color = "grey40", size = 1.25 ) +
-  # geom_smooth( method = "lm", color = "blue", se = TRUE, formula = 'y ~ x' ) +
-  geom_line(data = newdat, aes(y = pred_W), linewidth = 1) +
-  theme_bw() +
-  labs(x = "height (m)", y = "weight (kg)", 
-       # title = "Continous NHANES adults (21+ years)",
-       subtitle = "weight-height allometric model") +
-  annotate("text", x = 1.8, y = 25, label = fit_multiplicative , size = 3.5, color = "black" ) 
+beta_adult_strata <- beta_by_stratum(adults, "age_decade", adjust_sex = TRUE)
+beta_adult_strata |> knitr::kable(digits = 3)
 ```
 
-
-```{r, fig.width = 6, fig.height = 10 }
-library(patchwork)
-fig1 = (F1_A / F1_B ) + plot_annotation(tag_levels = "A")
-
-pdf("../results/figure1.pdf", width = 6, height = 10)
-fig1
-dev.off()
-
-fig1
-```
-
-
-
-## sex-centered loq-log regression
-
-### Sex adjusted adults
+### Figure 2B (adults): partial correlation of height with %BF
 
 ```{r}
-fitsc = lm( log10_weight ~ log10_height, data = adults |> 
-              dplyr::select(log10_weight_sc, log10_height_sc) |>
-              rename(log10_weight = log10_weight_sc,
-                     log10_height = log10_height_sc)
-            )
-
-## estiamte R squared
-rsq =  paste0( "R² = ",  round( summary(fitsc)$r.squared , d = 4) )
-cli::cli_alert_info("Model R squared: {rsq}")
-
-cli::cli_alert_info("Model formula")
-f = extract_formula(fitsc)
+hf_adult_strata <- hf_corr(adults_dxa, "age_decade")
+hf_adult_strata |> knitr::kable(digits = 3)
 ```
 
-
-NOTE: the beta estimate is, as expected, the same. 
-
-
-### A plot of the sex centered log-log regression
+### Figure 2C (adults): %BF at BMI 25, sex-adjusted GAM
 
 ```{r}
-pdata = data.frame(log10_height = adults$log10_height_sc, 
-                   log10_weight = adults$log10_weight_sc ) 
-
-## remove the 0 intercept
-f = gsub("0\\s*\\+\\s*", "", extract_formula(fitsc))
-f = gsub("_", " ", f)
-
-pdata |> ggplot( aes(x = log10_height, y = log10_weight ) ) +
-  geom_point( alpha = 0.3, color = "grey40", size = 1.25 ) +
-  geom_smooth( method = "lm", color = "black", se = TRUE, formula = 'y ~ x' ) +
-  theme_bw() +
-  labs(x = "log10 height (m)", y = "log10 weight (kg)", 
-       title = "Continous NHANES adults (21+ years)", 
-       subtitle = "height and weight were sex-centered prior to log-log regression") +
-  annotate("text", x = 0.0325, y = -0.38, label = f , size = 4.5, color = "black" ) +
-  annotate("text", x = 0.0325, y = -0.45, label = rsq , size = 4.5, color = "black" )
-```
-
-
-## If log10(BMI) associates with log10(height) then Beta differs significantly from 2. 
-
-```{r}
-cli::cli_alert_info("No sex adjustment")
-fit_test0 = lm(log10(wh2) ~ log10(height), data = adults )
-summary(fit_test0)$coefficients
-
-cli::cli_alert_info("Sex adjustment")
-fit_test = lm(log10(wh2) ~ sex + log10(height), data = adults )
-a = anova(fit_test)
-eta_sq = a[,2] / sum(a[,2])
-
-summary(fit_test)$coefficients
-```
-
-
-## Does WSI with a beta of 2.05 associate with height ?
-
-```{r}
-adults = adults |> mutate( wsi = weight / height^2.05 )
-fit_wsi = lm(log10(wsi) ~ sex + log10(height), data = adults)
-a = anova(fit_wsi)
-eta_sq = a[,2] / sum(a[,2])
-
-summary(fit_wsi)$coefficients
-```
-
-## IS BMI associated with % body fat in adults?
-
-```{r}
-## Males
-fit_bmi_fat = lm( percent_fat ~  wh2, data = adults |> filter(sex == "m"))
-summary(fit_bmi_fat)
+curves_adult_adj <- fit_stratum_curves(adults_dxa, "age_decade", adjust_sex = TRUE)
+pbf25_adult_adj  <- pbf_at_ref(curves_adult_adj)
+pbf25_adult_adj |> select(age_decade, n, age_mid, pbf, lo, hi, p_int) |> knitr::kable(digits = 3)
 ```
 
 ```{r}
-## Males
-fit_bmi_fat = lm( percent_fat ~  wh2, data = adults |> filter(sex == "f"))
-summary(fit_bmi_fat)
+save_result(list(beta = beta_adult_strata, hf = hf_adult_strata, pbf25 = pbf25_adult_adj),
+            "res_adult_strata")
 ```
 
+## Compositional stability: %BF vs BMI by sex and decade (Figure 8A)
+
+One GAM per sex × decade (`pbf ~ s(bmi, k = 5)`), drawn between the 5th and 95th BMI
+percentiles. `sd_resid` (the ribbon in Figure 8A) is the between-person spread in %BF at a
+given BMI.
+
+```{r}
+curves_adult <- fit_stratum_curves(adults_dxa, "age_decade")
+curves_adult |> filter(type == "curve") |> distinct(sex, age_decade, n, age_mid, sd_resid) |> knitr::kable(digits = 2)
+```
+
+### %BF at BMI 25 by decade (text: compositional stability ¶1)
+
+```{r}
+pbf25_adult <- pbf_at_ref(curves_adult)
+pbf25_adult |> select(sex, age_decade, pbf, lo, hi, n) |> knitr::kable(digits = 1)
+
+get_pbf <- function(s, g) pbf25_adult |> filter(sex == s, age_decade == g) |> pull(pbf)
+record_stat("adult_pbf25_m_2129",  get_pbf("Males",   "21–29"))
+record_stat("adult_pbf25_m_70",    get_pbf("Males",   "70+"))
+record_stat("adult_pbf25_m_delta", get_pbf("Males",   "70+") - get_pbf("Males",   "21–29"))
+record_stat("adult_pbf25_f_2129",  get_pbf("Females", "21–29"))
+record_stat("adult_pbf25_f_70",    get_pbf("Females", "70+"))
+record_stat("adult_pbf25_f_delta", get_pbf("Females", "70+") - get_pbf("Females", "21–29"))
+```
+
+### %BF at reference BMIs 20–35 (input to the drift sweep in 04)
+
+```{r}
+pbf_sweep_adult <- pbf_at_ref(curves_adult, opts$ref_bmi_sweep)
+pbf_sweep_adult |> count(sex, ref_bmi, name = "n_strata") |>
+  pivot_wider(names_from = sex, values_from = n_strata) |> knitr::kable()
+
+save_result(list(curves = curves_adult, pbf25 = pbf25_adult, sweep = pbf_sweep_adult),
+            "res_adult_curves")
+```
+
+## Save in-text statistics
+
+```{r}
+save_stats("02_adults")
+.stats |> knitr::kable(digits = 4)
+```
+
+## Session info
+
+```{r}
+sessioninfo::session_info()
+```

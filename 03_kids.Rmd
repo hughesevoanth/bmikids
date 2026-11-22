@@ -1,1183 +1,384 @@
 ---
-title: "Height and Weight"
+title: "Youth (2–20 y): scaling, height–fat dependence, compositional change and the CDC reference"
 author: "David A Hughes"
-date: "2026-01-06"
-output: html_document
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(tidyverse)
-library(purrr)
-library(patchwork)
-library(cli)
+<!--
+---- File Metadata ----
+Title: 03_kids.Rmd — youth-only analyses, Table 2 and in-text statistics
+Author: David A Hughes
+Email: david.hughes@pbrc.edu
+Date: 20 Nov 2026
+Version: 2.0
 
-source("function/extract_formula.R")
+Input : data/derived/kids.rds, kids_dxa.rds (01_data_wrangling.R); data/bmi-age-2022.csv (CDC)
+Output: data/derived/res_table2.rds        β by age and sex (Table 2; Figs 3A, 4, 6, 7)
+        data/derived/res_fig3.rds          β, growth velocity, BMI–height r
+        data/derived/res_fig4.rds          analytic BMI bias
+        data/derived/res_fig5.rds          height–%BF r; %BF by height quartile
+        data/derived/res_fig6.rds          R² of BMI/TMI/Benn; ΔR²; dependence on height–%BF r
+        data/derived/res_fig7.rds          GAM smooths of height, weight, BMI, TMI, Benn by age
+        data/derived/res_youth_strata.rds  youth estimates for Figure 2 (A–C)
+        data/derived/res_youth_curves.rds  sex-specific %BF ~ BMI curves (Fig 8B, drift)
+        data/derived/res_fig10.rds         empirical BMI percentiles (males)
+        data/derived/res_fig11.rds         CDC LMS parameters and percentile curves
+        results/stats/reproduced_03_kids.csv
+-->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+source("R/setup.R")
 ```
 
+## Read in the data
 
-## read in the data
+Youth aged 2–20 years with valid height and weight (`kids`). DXA analyses use participants
+aged 8–20 with a complete whole-body scan (`kids_dxa`); NHANES does not scan younger children.
 
 ```{r}
-f = "../data/processed/nhanes_combined_data.csv"
-mydata = read_csv(f, show_col_types = FALSE)
+kids     <- read_result("kids")
+kids_dxa <- read_result("kids_dxa")
 
-## Edits sex
-mydata = mydata |> mutate(sex = ifelse(sex == 1, "m", "f") )
-mydata = mydata |> mutate(sex = as.factor(sex))
-
-cli::cli_alert_info("Total individuals in dataset: {nrow(mydata)}")
+cli::cli_alert_info("Youth: {nrow(kids)}; with DXA (8–20 y): {nrow(kids_dxa)}")
+kids     |> count(age, sex) |> pivot_wider(names_from = sex, values_from = n) |> knitr::kable()
+kids_dxa |> count(sex) |> knitr::kable()
 ```
 
+## Table 2: allometric exponent β by age and sex
 
-## limit to kids / exclude adults
+The log–log regression of weight on height (Table 1, Equation 3) is fit at each single
+year of age: separately for females and males, and once with sex as a covariate (sex-adjusted).
 
 ```{r}
-kids = mydata |> filter(age < 21) 
-cli::cli_alert_info("Total kids: {kids |> filter(age < 21) |> nrow() }")
+beta_sex <- beta_by_stratum(kids, "age")
+beta_adj <- beta_by_stratum(kids, "age", adjust_sex = TRUE)
+
+table2 <- bind_rows(beta_sex, beta_adj |> mutate(sex = "Sex-adjusted")) |>
+  mutate(sex = factor(sex, levels = c("Females", "Males", "Sex-adjusted"))) |>
+  select(age, sex, n, beta, se, lo, hi, r2, p_int) |>
+  arrange(age, sex)
+
+table2 |>
+  mutate(cell = sprintf("%.2f ± %.2f", beta, se)) |>
+  select(age, sex, cell) |>
+  pivot_wider(names_from = sex, values_from = cell) |>
+  knitr::kable()
 ```
 
-## Male Female Count
+### Table 2 in-text values
 
 ```{r}
-cli::cli_alert_info("Number of females and males:")
-
-kids |> filter(age < 21) |> 
-  select(sex) |> table()
+adj <- function(a) beta_adj |> filter(age %in% a) |> pull(beta)
+record_stat("youth_beta_age11",   adj(11))
+record_stat("box_beta_age2",      adj(2))
+record_stat("box_beta_peak_min",  min(adj(8:11)))
+record_stat("box_beta_peak_max",  max(adj(8:11)))
+record_stat("box_beta_16_20_min", min(adj(16:20)))
+record_stat("box_beta_16_20_max", max(adj(16:20)))
 ```
 
+### Benn's index exponents
 
-## Ancestry / ethnicity composition
+Benn's index uses the **sex-specific** β for each age (Table 2, female and male columns).
 
 ```{r}
-cli::cli_alert_info("Ancestry composition:")
-table(kids$ethnicity)
+benn_beta <- beta_sex |> select(age, sex, beta_benn = beta)
+
+kids     <- kids     |> left_join(benn_beta, by = join_by(age, sex)) |> mutate(benn = weight_kg / height_m^beta_benn)
+kids_dxa <- kids_dxa |> left_join(benn_beta, by = join_by(age, sex)) |> mutate(benn = weight_kg / height_m^beta_benn)
+stopifnot(!anyNA(kids$benn))
+
+save_result(table2, "res_table2")
 ```
 
-### ethnicity codes 
+## Figure 3: β, growth velocity, and the height–BMI correlation
 
-    - 1 = Mexican american, 
-    - 2 = other Hispanic, 
-    - 3 = non-Hispanic white, 
-    - 4 = non-Hispanic black, 
-    - 5 = other/multiracial
+### Figure 3A: β by age
 
-
-
-## edit height from cm to m
+Points are the sex-adjusted estimates (Table 2); the curves smooth the sex-specific and
+sex-adjusted estimates (drawn in `figures/fig03_*.R`).
 
 ```{r}
-kids = kids |> mutate(height = height * 0.01)
+fig3a <- table2 |> mutate(sex = fct_recode(sex, All = "Sex-adjusted"))
 ```
 
+### Figure 3B: growth velocity
 
-## estimate w/h and w/h^2 (aka BMI) and height squared
+Difference in median height between consecutive single years of age, plotted at the older
+age (ages 3–19, as in v1).
 
 ```{r}
-kids = kids |> mutate(wh = weight/height, wh2 = weight/height^2, height2 = height^2)
+fig3b <- growth_velocity(kids) |> filter(age >= 3, age <= 19)
+fig3b |> select(sex, age, velocity) |> pivot_wider(names_from = sex, values_from = velocity) |>
+  knitr::kable(digits = 1)
 ```
 
+### Figure 3C: Pearson correlation of BMI with height
 
-## estimate log10(height) and log10(weight)
+By age and sex, plus the pooled sample ("All", sexes combined and unadjusted for sex).
 
 ```{r}
-kids = kids |> mutate( log10_height = log10(height), log10_weight = log10(weight) )
-```
-
-## Age range:
-
-```{r}
-kids |> select(age) |> summary()
-```
-
-
-## For each age from 2 to 20 estimate log-log regression of weight vs height
-
-```{r}
-beta = c()
-beta_se = c()
-rsq_values = c()
-
-for (a in 2:20) {
-  kdata = kids |> filter(age == a)
-  fit_k = lm( log10_weight ~ sex + log10_height, data = kdata )
-  ## extract Beta
-  b = summary(fit_k)$coef["log10_height", "Estimate"]
-  beta = c(beta, b)
-  se = summary(fit_k)$coef["log10_height", "Std. Error"]
-  beta_se = c(beta_se, se)
-  ## Estimate Rsquared
-  rsq = round( summary(fit_k)$r.squared , d = 4)
-  rsq_values = c(rsq_values, rsq)
-  ## Extract the formula
-  f = suppressMessages( extract_formula(fit_k) )
-  cli::cli_alert_info("Age: {a} years -- R squared: {rsq} -- Formula: {f} ")
-}
-
-```
-
-
-## sex specific estimates
-
-```{r}
-
-## Derive estimates for MALES
-beta_males = c()
-beta_se_males = c()
-rsq_values_males = c()
-
-for (a in 2:20) {
-  kdata = kids |> filter(age == a, sex == "m" )
-  fit_k = lm( log10_weight ~ log10_height, data = kdata )
-  ## extract Beta
-  b = summary(fit_k)$coef["log10_height", "Estimate"]
-  beta_males = c(beta_males, b)
-  se = summary(fit_k)$coef["log10_height", "Std. Error"]
-  beta_se_males = c(beta_se_males, se)
-  ## Estimate Rsquared
-  r = round( summary(fit_k)$r.squared , d = 4)
-  rsq_values_males = c(rsq_values_males, r)
-}
-
-
-## Derive estimates for FEMALES
-beta_females = c()
-beta_se_females = c()
-rsq_values_females = c()
-
-for (a in 2:20) {
-  kdata = kids |> filter(age == a, sex == "f" )
-  fit_k = lm( log10_weight ~ log10_height, data = kdata )
-  ## extract Beta
-  b = summary(fit_k)$coef["log10_height", "Estimate"]
-  beta_females = c(beta_females, b)
-  se = summary(fit_k)$coef["log10_height", "Std. Error"]
-  ## extract se
-  beta_se_females = c(beta_se_females, se)
-  ## Estimate Rsquared
-  r = round( summary(fit_k)$r.squared , d = 4)
-  rsq_values_females = c(rsq_values_females, r)
-}
-
-```
-
-## combine into a dataframe
-
-```{r}
-beta_df = tibble(age = 2:20, 
-                 beta_all = beta, 
-                 se_all = beta_se,
-                 beta_male = beta_males, 
-                 se_male = beta_se_males,
-                 beta_female = beta_females, 
-                 se_female = beta_se_females,
-                 rsq_all = rsq_values, 
-                 rsq_male = rsq_values_males, 
-                 rsq_female = rsq_values_females)
-
-
-
-# The Solution
-beta_long <- beta_df |> pivot_longer(
-    cols = -age,
-    names_to = c(".value", "sex"),
-    names_sep = "_"
-  )
-  
-## estimate upper and lower CI
-beta_long = beta_long |> 
-  mutate( lower_ci = beta - 1.96 * se,
-          upper_ci = beta + 1.96 * se )
-```
-
-## Table age, and sex specific betas
-
-```{r}
-library(glue)
-
-beta_table <- beta_df |>
-  transmute(
-    age,
-    `female` = glue("{round(beta_female, 2)} ({round(se_female, 2)})"),
-    `male`   = glue("{round(beta_male, 2)} ({round(se_male, 2)})"),
-    `all`    = glue("{round(beta_all, 2)} ({round(se_all, 2)})")
-  )
-
-write.csv(beta_table, file = "../results/table2.csv", col.names = TRUE, row.names = FALSE)
-```
-
-
-## plot beta vs age
-
-```{r}
-plotk1 = beta_long |> 
-  filter(sex == "all") |> 
-  ggplot(aes(x = age, y = beta)) +
-  # --- Background Lines ---
-  geom_hline(yintercept = 2, linetype = "dashed", color = "grey", size = 1.25) +
-  # geom_vline(xintercept = 20, linetype = "dashed", color = "grey", size = 1.25) +
-  
-  # --- GAM Lines (Consolidated) ---
-  geom_smooth(
-    data = beta_long, 
-    aes(color = sex),  
-    method = "gam", 
-    se = FALSE, 
-    size = 1.25, 
-    formula = y ~ s(x, bs = "cs")
-  ) +
-  
-  # --- Points & Error Bars (for 'all' only) ---
-  # These inherit the data (sex == "all") from the top-level pipe
-  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2, color = "black", size = 1) +
-  geom_point(size = 4, color = "black") +
-  
-  # --- Color Scale (The Legend) ---
-  # This sets your specific colors and labels
-  scale_color_manual(
-    name = "Sex", # Title of the legend
-    values = c("female" = "grey50", "male" = "grey80", "all" = "black"),
-    labels = c("female" = "Females", "male" = "Males", "all" = "All") 
-  ) +
-  
-  # --- Theme & Grid Settings ---
-  theme_bw() +
-  scale_x_continuous(breaks = seq(min(beta_long$age), max(beta_long$age), by = 1)) + 
-  labs(x = "age (years)", y = expression(beta),
-       subtitle = "estimates of beta across childhood and adolesence" )
-
-plotk1
-```
-
-## simple line plot of beta vs age
-
-```{r}
-beta_long |> 
-  mutate(sex = as.factor(sex)) |>
-  ggplot(aes(x = age, y = beta)) +
-  geom_hline(yintercept = 2, linetype = "dashed", color = "grey", size = 1.25) +
-  geom_line(aes(color = sex), size = 1) +
-  geom_point(aes(color = sex), size = 4) +
-  theme_bw() +
-  scale_color_manual(values = c("black", "grey80", "grey50")) +
-  scale_x_continuous(breaks = seq(min(beta_long$age), max(beta_long$age), by = 1)) + 
-  labs(x = "age (years)", y = expression(beta),
-       subtitle = "estimates of beta across childhood and adolesence" )
-```
-
-
-## make a Height Growth Velocity plot
-
-### estimate growth velocity (cm/year) for females
-
-```{r}
-hgv_data <- kids |>
-  filter(age >= 2, age <= 20) |> # Start at 3 so we have a baseline for age 4
-  group_by(sex, age) |>
-  summarize(
-    median_height = median(height, na.rm = TRUE) * 100, 
-    .groups = "drop"
-  
-  ) |>
-  arrange(sex, age) |> 
-  group_by(sex) |>
-  mutate(
-    # Attained Velocity Calculation:
-    # Current Height (Age A) minus Previous Height (Age A-1)
-    growthvelocity = median_height - lag(median_height)
-  ) |>
-  ungroup() |>
-  # Filter to 4-19 to match your desired output
-  # (Age 3 will be NA anyway because there is no Age 2 data to subtract)
-  filter(age >= 3, age <= 19) |> 
-  mutate(sex_label = ifelse(sex == "f", "Females", "Males"))
-
-head(hgv_data)
-```
-
-
-```{r}
-plotk2 <- hgv_data |> 
-  ggplot(aes(x = age, y = growthvelocity, color = sex_label)) +
-  geom_point(size = 4) +
-  # Using a GAM with a cubic spline (bs="cs") handles the curve smoothly
-  geom_smooth(method = "gam", se = FALSE, size = 1.25, formula = y ~ s(x, bs = "cs")) +
-  
-  theme_bw() +
-  
-  # Grid lines at every integer age
-  scale_x_continuous(breaks = seq(min(hgv_data$age), max(hgv_data$age), by = 1)) + 
-  
-  # Colors
-  scale_color_manual(
-    name = "Sex",
-    values = c("Females" = "grey50", "Males" = "grey80")
-  ) +
-  
-  labs(
-    x = "age (years)", 
-    y = "growth velocity (cm/year)",
-    subtitle = "height growth velocity"
-  )
-
-plotk2
-```
-
-
-```{r, fig.width = 7, fig.height = 9}
-fig2 = (plotk1 / plotk2) + plot_annotation(tag_levels = "A")
-
-pdf("../results/figure2.pdf", width = 6, height = 8)
-fig2
-dev.off()
-
-fig2
-```
-
-## Height-dependent bias when BMI is used under different scaling exponents
-
-If all 11 year old children had the same true relative weight, how would BMI change just because height changes?
-
-```{r}
-
-# Reference height (e.g., median 11-year-old)
-H0 <- 1.5
-
-# Different growth regimes
-betas <- c(
-  "Adult-like (β = 2.0)" = 2.0,
-  "Age 3 NHANES (β = 2.43)" = 2.43,
-  "Age 5 NHANES (β = 2.96)" = 2.96,
-  "Age 11 NHANES (β = 3.68)" = 3.68
-)
-
-df <- expand_grid(
-  height = seq(1.35, 1.65, by = 0.01),
-  stage  = names(betas)
+fig3c <- bind_rows(
+  kids |> group_by(age, sex) |> group_modify(~ cor_summary(.x, "height_m", "bmi")) |> ungroup(),
+  kids |> group_by(age)      |> group_modify(~ cor_summary(.x, "height_m", "bmi")) |> ungroup() |>
+    mutate(sex = "All")
 ) |>
-  mutate(
-    beta = betas[stage],
-    bias_pct = 100 * ((height / H0)^(beta - 2) - 1)
-  )
+  mutate(sex = factor(sex, levels = c("All", "Females", "Males")),
+         signif = p < opts$p_star)
 
-df = df |> mutate(stage = factor(stage, levels = names(betas)))
+r_at <- function(s, a) fig3c |> filter(sex == s, age == a) |> pull(r)
+record_stat("youth_r_bmi_height_f7", r_at("Females", 7))
+record_stat("youth_r_bmi_height_m8", r_at("Males", 8))
 
-pcol <- RColorBrewer::brewer.pal(8, "Greys")[c(8,6,4,3)]
+fig3c |> filter(sex != "All") |> slice_max(r, n = 1, by = sex) |> knitr::kable(digits = 3)
 
-bias_plot = ggplot(df, aes(height, bias_pct, color = stage)) +
-  geom_hline(yintercept = 0, linetype = 2) +
-  geom_vline(xintercept = H0, linetype = 2) +
-  geom_line(linewidth = 1) +
-  labs(
-    x = "Height (m)",
-    y = "BMI bias (%) assuming equal true relative weight",
-    title = "Height-dependent bias when BMI is used during growth",
-    subtitle = "Bias arises because BMI divides by height² while true weight scales faster than height²",
-    color = "Growth stage"
-  ) +
-  theme_minimal() +
-  #scale_color_brewer(palette = "Greys", direction = -1)
-  scale_color_manual(values = pcol)
-
-bias_plot
+save_result(list(beta = fig3a, velocity = fig3b, r_bmi_height = fig3c), "res_fig3")
 ```
 
+## Figure 4: height-dependent bias in BMI
 
-Each line assumes that all children have the same true relative weight, defined by W / H^β. When β = 2, BMI is height-neutral. As β increases above 2 BMI becomes progressively more height dependent, inflating relative weight in taller children and deflating it in shorter children. This bias arises mechanically from dividing weight by H^2 when the true scaling exponent exceeds 2.
-  
-  
-Each line assumes that children have the same true relative weight, defined by the appropriate allometric scaling at that age. When the true scaling exponent equals 2, BMI is height-neutral. However, as the exponent increases above 2, as occurs during childhood and puberty, BMI becomes progressively height dependent. Under these conditions, BMI inflates relative weight estimates in taller children and deflates them in shorter children, even when true adiposity is identical.
-
----
-
-BMI bias is not about predicting weight incorrectly; it is about dividing by the wrong power of height, which causes the index itself to drift with height even when true relative weight is constant.
-
----
-
-When children’s weight increases faster than height², dividing by height² leaves a residual height effect, causing BMI to rise with height even when true relative weight is the same.
-
+If relative weight is W/H^β, two children with the same relative weight but heights H and H₀
+differ in BMI by (H/H₀)^(β−2) − 1. The β values are the sex-adjusted Table 2 estimates.
 
 ```{r}
+bias_stages <- tibble(
+  stage = c("Adult-like", "Age 3 NHANES", "Age 5 NHANES", "Age 11 NHANES"),
+  beta  = c(2, adj(3), adj(5), adj(11))
+) |>
+  mutate(label = sprintf("%s (β = %.2f)", stage, beta))
 
-pdf("../results/SupFig1.pdf", width = 7, height = 4.5)
-bias_plot
-dev.off()
+fig4 <- expand_grid(bias_stages, rel_height = seq(0.90, 1.10, by = 0.005)) |>
+  mutate(bias_pct = 100 * (rel_height^(beta - 2) - 1))
 
+record_stat("bias_age11_plus10",  100 * (1.10^(adj(11) - 2) - 1))
+record_stat("bias_age11_minus10", 100 * (0.90^(adj(11) - 2) - 1))
+
+save_result(fig4, "res_fig4")
 ```
 
+## Figure 5: height and %BF (DXA, 8–20 y)
 
-## Pearson correlation between height and percent body fat by age (overall and by sex)
+### Figure 5A: Pearson correlation of height with %BF, by age and sex
 
 ```{r}
-# Helper: compute r, CI, p-value, and n for one group
-cor_summary <- function(df) {
-  df <- df |> filter(!is.na(height), !is.na(percent_fat))
-
-  n <- nrow(df)
-  if (n < 3) {
-    return(tibble(
-      pbf_height_r = NA_real_,
-      pbf_height_lower_ci = NA_real_,
-      pbf_height_upper_ci = NA_real_,
-      pbf_height_p = NA_real_,
-      n = n
-    ))
-  }
-
-  ct <- cor.test(df$height, df$percent_fat, use = "complete.obs")
-
-  tibble(
-    pbf_height_r = unname(ct$estimate),
-    pbf_height_lower_ci = ct$conf.int[1],
-    pbf_height_upper_ci = ct$conf.int[2],
-    pbf_height_p = ct$p.value,
-    n = n
-  )
-}
-
-# Helper: run the summaries by age for a given sex stratum
-summarize_by_age <- function(data, sex_label = "all", sex_filter = NULL) {
-  data2 <- data |> filter(!is.na(percent_fat))
-  if (!is.null(sex_filter)) data2 <- data2 |> filter(sex == sex_filter)
-
-  data2 |>
-    group_by(age) |>
-    group_modify(~ cor_summary(.x)) |>
-    ungroup() |>
-    mutate(sex = sex_label)
-}
-
-hpbf_cors <- bind_rows(
-  summarize_by_age(kids, sex_label = "all"),
-  summarize_by_age(kids, sex_label = "female", sex_filter = "f"),
-  summarize_by_age(kids, sex_label = "male",   sex_filter = "m")
-)
-```
-
-
-
-```{r}
-pd <- position_dodge(width = 0.4)
-
-Fig3 = hpbf_cors |>
-  filter(sex != "all") |>
-  ggplot(aes(x = age, y = pbf_height_r, color = sex, group = sex)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 1.25) +
-  geom_vline(xintercept = 11.5, linetype = "dotted", color = "black", linewidth = 1) +
-  geom_errorbar(
-    aes(ymin = pbf_height_lower_ci, ymax = pbf_height_upper_ci),
-    width = 0.2, linewidth = 1,
-    position = pd
-  ) +
-  geom_point(size = 4, position = pd) +
-  geom_text(
-    data = hpbf_cors |>
-      filter(sex == "male", age == 19),
-    aes(
-      x = age,
-      y = pbf_height_lower_ci,
-      label = "*"
-    ),
-    vjust = 1.2,          # pushes the asterisk below the error bar
-    size = 8,
-    position = pd,
-    inherit.aes = FALSE, 
-    color = "grey80"
-  ) +
-  geom_text(
-    data = hpbf_cors |>
-      filter(sex == "male", age < 12),
-    aes(
-      x = age,
-      y = pbf_height_upper_ci,
-      label = "*"
-    ),
-    vjust = 0.4,          # pushes the asterisk below the error bar
-    size = 8,
-    position = pd,
-    inherit.aes = FALSE, 
-    color = "black"
-  ) +
-  geom_smooth(
-    method = "gam",
-    formula = y ~ s(x, bs = "tp"),
-    se = FALSE
-  ) +
-  theme_bw() +
-  scale_x_continuous(breaks = seq(2, 20, by = 1)) +
-  labs(
-    x = "age (years)",
-    y = "Pearson's r",
-    subtitle = "correlation between height and percent body fat across childhood and adolescence"
-  ) +
-  scale_color_manual(values = c("grey50", "grey80"))
-
-Fig3
-
-```
-
-
-```{r}
-pdf("../results/figure3.pdf", width = 7, height = 4.5)
-Fig3
-dev.off()
-
-```
-
-
-
-## Estimate R-squared between percent fat AND (BMI and TMI) (Tri-ponderal Mass Index) by age and sex
-
-
-```{r}
-# Compute BMI and TMI once
-kids <- kids |>
-  mutate(
-    bmi = weight / height^2,
-    tmi = weight / height^3
-  )
-
-# Helper: Pearson correlation test summary for any x-y pair
-cor_test_tbl <- function(x, y) {
-  cc <- complete.cases(x, y)
-  x <- x[cc]; y <- y[cc]
-  n <- length(x)
-
-  if (n < 3) {
-    return(tibble(
-      r = NA_real_,
-      r2 = NA_real_,
-      lower_ci = NA_real_,
-      upper_ci = NA_real_,
-      p = NA_real_,
-      n = n
-    ))
-  }
-
-  ct <- cor.test(x, y, method = "pearson")
-  r <- unname(ct$estimate)
-
-  tibble(
-    r = r,
-    r2 = r^2,
-    lower_ci = ct$conf.int[1],
-    upper_ci = ct$conf.int[2],
-    p = ct$p.value,
-    n = n
-  )
-}
-
-# Summarise by age for a given stratum
-summarise_by_age <- function(dat, sex_label) {
-  dat |>
-    group_by(age) |>
-    summarise(
-      # percent fat vs BMI
-      cor_test_tbl(percent_fat, bmi) |>
-        rename(
-          pbf_bmi_r = r,
-          pbf_bmi_r2 = r2,
-          pbf_bmi_lower_ci = lower_ci,
-          pbf_bmi_upper_ci = upper_ci,
-          pbf_bmi_p = p,
-          n = n
-        ),
-      # percent fat vs TMI
-      cor_test_tbl(percent_fat, tmi) |>
-        rename(
-          pbf_tmi_r = r,
-          pbf_tmi_r2 = r2,
-          pbf_tmi_lower_ci = lower_ci,
-          pbf_tmi_upper_ci = upper_ci,
-          pbf_tmi_p = p,
-          n = n
-        ),
-      .groups = "drop"
-    ) |>
-    mutate(sex = sex_label)
-}
-
-# Combine all, female, male
-bmi_tmi_pbf_cors <- bind_rows(
-  summarise_by_age(kids, "all"),
-  summarise_by_age(filter(kids, sex == "f"), "female"),
-  summarise_by_age(filter(kids, sex == "m"), "male")
-) |> na.omit()
-
-```
-
-## pivot long
-
-```{r}
-bmi_tmi_pbf_long <- bmi_tmi_pbf_cors |>
-  pivot_longer(
-    cols = starts_with("pbf_"),
-    names_to = c("wsi", ".value"),
-    names_pattern = "pbf_(bmi|tmi)_(.*)"
-  )
-
-## make bmi BMI and tmi TMI
-bmi_tmi_pbf_long = bmi_tmi_pbf_long |> 
-  mutate( wsi = case_when(
-    wsi == "bmi" ~ "BMI",
-    wsi == "tmi" ~ "TMI"
-  ))
-```
-
-
-## plotting R-squared by age for BMI and TMI
-
-```{r, fig.width = 10, fig.height = 8}
-Fig4 = bmi_tmi_pbf_long |> filter(sex != "all") |>
-  ggplot( aes(x = age, y = r2, color = sex, shape = wsi) ) +
-  geom_point(size = 3.5) +
-  geom_line() +
-  geom_errorbar( aes(ymin = lower_ci^2, ymax = upper_ci^2), width = 0.2, size = 1 ) +
-  geom_smooth( method = "gam", formula = y ~ s(x, bs = "tp"), se = FALSE, linetype = "dashed" ) +
-  # geom_smooth(method = "lm", formula = y ~ poly(x,2), se = FALSE, linetype = "dotted") +
-  facet_wrap(~wsi+sex, nrow = 2) +
-  theme_bw() +
-  scale_color_manual(values = c("grey50", "grey80")) +
-  scale_x_continuous(breaks = seq(8, 20, by = 1)) +
-  labs(y = "variance explained", x = "age (years)",
-       shape = "Weight-Stature\nIndex", color = "sex",
-       subtitle = "R-squared between percent body fat and BMI or TMI across childhood and adolescence")
-
-Fig4
-```
-
-```{r}
-pdf("../results/figure4.pdf", width = 10, height = 8)
-Fig4
-dev.off()
-
-```
-
-## The average Variance explained for BMI and TMI in males and females
-
-```{r}
-bmi_tmi_pbf_long |> filter(sex != "all") |> group_by(wsi, sex) |> summarise(mean = mean(r2), median = median(r2)) |> arrange(sex)
-```
-
-
-## average R-squared across all females BMI and TMI on Percent Fat
-
-```{r}
-cli::cli_alert_info("BMI r-square with percent fat")
-summary(lm( percent_fat ~ bmi, data = kids |> filter(sex == "f")))$r.squared
-
-cli::cli_alert_info("TMI r-square with percent fat")
-summary(lm( percent_fat ~ tmi, data = kids |> filter(sex == "f")))$r.squared
-```
-## average R-squared across all males BMI and TMI on Percent Fat
-
-```{r}
-cli::cli_alert_info("BMI r-square with percent fat")
-summary(lm( percent_fat ~ bmi, data = kids |> filter(sex == "m")))$r.squared
-
-cli::cli_alert_info("TMI r-square with percent fat")
-summary(lm( percent_fat ~ tmi, data = kids |> filter(sex == "m")))$r.squared
-```
-
-
-## female BMI %Fat R-squared at age 11
-
-```{r}
-cli::cli_alert_info("BMI r-square with percent fat at age 11")
-summary(lm( percent_fat ~ bmi, data = kids |> filter(sex == "f", age == 11)))$r.squared
-
-cli::cli_alert_info("TMI r-square with percent fat at age 11")
-summary(lm( percent_fat ~ tmi, data = kids |> filter(sex == "f", age == 11)))$r.squared
-```
-## male BMI 
-
-```{r}
-cli::cli_alert_info("BMI r-square with percent fat  at age 11")
-summary(lm( percent_fat ~ bmi, data = kids |> filter(sex == "m", age == 12)))$r.squared
-
-cli::cli_alert_info("TMI r-square with percent fat  at age 11")
-summary(lm( percent_fat ~ tmi, data = kids |> filter(sex == "m", age == 12)))$r.squared
-```
-
-
-```{r}
-df = kids |> filter(sex == "f") |> 
-  select(percent_fat, bmi) |>
-  na.omit()
-
-fit   = lm(percent_fat ~ bmi, data = df)
-coefs = coef(fit)
-r2    = summary(fit)$r.squared
-label = paste0("y = ", round(coefs[1], 2), " + ", round(coefs[2], 2), "x",
-               "\nR² = ", round(r2, 3))
-
-p1 = df |> ggplot(aes(x = bmi, y = percent_fat)) +
-  geom_point(color = "grey40", alpha = 0.5, size = 2.5) +
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x, color = "black") +
-  geom_smooth(method = "gam", se = FALSE, formula = y ~ s(x), color = "blue") +
-  annotate("text", x = -Inf, y = Inf, label = label,
-         hjust = -0.1, vjust = 1.5, size = 4) +
-  labs(x = "BMI (kg/m2)", y = "Percent Body Fat") +
-  theme_bw()
-```
-
-
-```{r}
-df = kids |> filter(sex == "f") |> 
-  select(percent_fat, tmi) |>
-  na.omit()
-
-fit   = lm(percent_fat ~ tmi, data = df)
-coefs = coef(fit)
-r2    = summary(fit)$r.squared
-label = paste0("y = ", round(coefs[1], 2), " + ", round(coefs[2], 2), "x",
-               "\nR² = ", round(r2, 3))
-
-p2= df |> ggplot(aes(x = tmi, y = percent_fat)) +
-  geom_point(color = "grey40", alpha = 0.5, size = 2.5) +
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x, color = "black") +
-  geom_smooth(method = "gam", se = FALSE, formula = y ~ s(x), color = "blue") +
-  annotate("text", x = -Inf, y = Inf, label = label,
-         hjust = -0.1, vjust = 1.5, size = 4) +
-  labs(x = "TMI (kg/m3)", y = "Percent Body Fat") +
-  theme_bw()
-```
-
-
-```{r, fig.width = 5, fig.height = 8}
-p1/p2 + plot_annotation(tag_levels = "A") &
-  theme(plot.tag = element_text(size = 14, face = "bold"))
-```
-
-
-```{r}
-kids |> 
-  select(percent_fat, bmi, tmi, sex) |>
-  na.omit() |>
-  ggplot(aes(x = bmi, y = percent_fat, color = sex) ) +
-  geom_point(alpha = 0.25) +
-  geom_smooth(method = "lm", se = FALSE, formula = y ~ x) +
-  # scale_color_brewer(palette = "Set1") +
-  scale_color_manual(values = c("grey60", "grey20")) +
-  # geom_smooth(method = "gam", se = FALSE, formula = y ~ s(x), color = "red") +
-  theme_bw() 
-```
-
-## Estimate  weight-stature index (WSI) for each individual using the sex and age-specific allometric exponents
-
-```{r}
-library(dplyr)
-library(tidyr)
-
-# 1) Build age-by-sex beta lookup table
-beta_lookup <- beta_df |>
-  transmute( age, beta_male, beta_female, beta_all ) |>
-  pivot_longer(
-    cols = starts_with("beta_"),
-    names_to = "sex",
-    names_pattern = "beta_(male|female|all)",
-    values_to = "beta" ) |>
-  mutate(sex = recode(sex, male = "m", female = "f", all = "all") )
-
-# 2) Join betas onto kids and compute WSI
-kids_wsi <- kids |>
-  left_join(beta_lookup, by = c("age", "sex")) |>
-  mutate(
-    wsi = weight / (height^beta)
-  )
-
-## check for missing betas
-kids_wsi |>
-  mutate(beta_missing = is.na(beta)) |> count(beta_missing)
-
-```
-
-
-Is WSI height independent at each age?
-
-
-```{r}
-
-cli::cli_alert_info("Height dependence of WSI at each age:")
-
-wsi_height_independence = t( sapply(2:20, function(a){
-  summary( lm(log10(wsi) ~ sex + log10(height), data = kids_wsi |> filter(age == a)) )$coef["log10(height)", ]  
-}) )
-
-x = kids_wsi |> pull(age) |> unique() |> sort()
-
-library(scales)
-
-wsi_height_independence |> 
-  as_tibble() |> 
-  mutate(age = x, .before = "Estimate") |> 
-  mutate(across(c(Estimate, `Std. Error`, `t value`, `Pr(>|t|)`), 
-                label_scientific(digits = 3))) |> 
-  knitr::kable() |> 
-  kableExtra::kable_classic(full_width = FALSE)
-```
-
-Is BMI height independent at each age?
-
-```{r}
-
-cli::cli_alert_info("Height dependence of BMI at each age:")
-
-bmi_height_independence = t( sapply(2:20, function(a){
-  summary( lm(log10(bmi) ~ sex + log10(height), data = kids_wsi |> filter(age == a)) )$coef["log10(height)", ]  
-}) )
-
-bmi_height_independence |>
-  as_tibble() |> 
-  mutate(age = x, .before = "Estimate") |> 
-  mutate(across(c(Estimate, `Std. Error`, `t value`, `Pr(>|t|)`), 
-                label_scientific(digits = 3))) |> 
-  knitr::kable() |> 
-  kableExtra::kable_classic(full_width = FALSE)
-
-```
-
-
-
-Is TMI height independent at each age?
-
-```{r}
-
-
-cli::cli_alert_info("Height dependence of TMI at each age:")
-
-tmi_height_independence = t( sapply(2:20, function(a){
-  summary( lm(log10(tmi) ~ sex + log10(height), data = kids_wsi |> filter(age == a)) )$coef["log10(height)", ]  
-}) )
-
-tmi_height_independence |>
-  as_tibble() |> 
-  mutate(age = x, .before = "Estimate") |> 
-  mutate(across(c(Estimate, `Std. Error`, `t value`, `Pr(>|t|)`), 
-                label_scientific(digits = 3))) |> 
-  knitr::kable() |> 
-  kableExtra::kable_classic(full_width = FALSE)
-
-```
-
-## correlation between BMI, TMI and WSI, and percent body fat in males at age 8
-
-```{r}
-cli::cli_alert_info("NOTE the true allometric exponent (Beta) = 3.72")
-cli::cli_alert_info("BMI r-square with percent fat at age 8")
-summary(lm( percent_fat ~ bmi, data = kids_wsi |> filter(sex == "m", age == 8)))$r.squared
-
-cli::cli_alert_info("TMI r-square with percent fat at age 8")
-summary(lm( percent_fat ~ tmi, data = kids_wsi |> filter(sex == "m", age == 8)))$r.squared
-
-cli::cli_alert_info("WSI r-square with percent fat at age 8")
-summary(lm( percent_fat ~ wsi, data = kids_wsi |> filter(sex == "m", age == 8)))$r.squared
-
-
-```
-
-## correlation between BMI, TMI and WSI, and percent body fat in males at age 14
-
-```{r}
-
-cli::cli_alert_info("NOTE the true allometric exponent (Beta) = 2.47")
-cli::cli_alert_info("BMI r-square with percent fat at age 14")
-summary(lm( percent_fat ~ bmi, data = kids_wsi |> filter(sex == "f", age == 14)))$r.squared
-
-cli::cli_alert_info("TMI r-square with percent fat at age 14")
-summary(lm( percent_fat ~ tmi, data = kids_wsi |> filter(sex == "f", age == 14)))$r.squared
-
-cli::cli_alert_info("WSI r-square with percent fat at age 14")
-summary(lm( percent_fat ~ wsi, data = kids_wsi |> filter(sex == "f", age == 14)))$r.squared
-
-```
-
-## Lets use age sex height and weight to derive our own % body fat model
-
-
-```{r}
-beta_lookup_wide <- beta_df |>
-  transmute(
-    age,
-    beta_all,
-    beta_male,
-    beta_female
-  )
-
-kids_wsi <- kids |>
-  left_join(beta_lookup_wide, by = "age") |>
-  mutate(
-    beta_sex = case_when(
-      sex == "m" ~ beta_male,
-      sex == "f" ~ beta_female,
-      TRUE       ~ NA_real_
-    ),
-    wsi_sex = weight / (height^beta_sex),
-    wsi_all = weight / (height^beta_all)
-  )
-
-```
-
-
-
-
-
-```{r}
-library(dplyr)
-library(mgcv)
-
-kids2 <- kids %>%
-  mutate(
-    sex = factor(sex, levels = c("f", "m")),
-    log_height = log(height),
-    log_weight = log(weight)
-  ) %>%
-  filter(!is.na(percent_fat), !is.na(log_height), !is.na(log_weight), !is.na(age), !is.na(sex))
-
-# Fit a GAM 
-fit_pbf <- gam(
-  percent_fat ~ sex + s(age, by = sex, k = 12) + te(log_height, log_weight, by = sex, k = c(10, 10)), 
-  data = kids2, method = "REML" )
-
-# Model-based index: predicted percent fat
-kids2 <- kids2 %>%
-  mutate(
-    pbf_hat = predict(fit_pbf, newdata = ., type = "response"),
-    pbf_resid = percent_fat - pbf_hat
-  )
-
-# Optional: standardize the index within age x sex (often useful for interpretation)
-kids2 <- kids2 %>%
-  group_by(age, sex) %>%
-  mutate(
-    pbf_hat_z = as.numeric(scale(pbf_hat))
-  ) %>%
-  ungroup()
-
-```
-
-
-```{r}
-kids2 |> dplyr::select(sex, age, height, weight, bmi, tmi, pbf_hat, percent_fat, pbf_resid, pbf_hat_z) |> head(10)
-```
-
-## Correlation between predicted percent body fat and measured percent body fat
-
-```{r}
-r_estimates = kids2 %>%
-  summarise(r = cor(percent_fat, pbf_hat, use = "complete.obs"),
-            r2 = r^2) # |> knitr::kable() |> kableExtra::kable_classic(full_width = FALSE)
-
-cli::cli_inform("Overall correlation between predicted and measured percent body fat: \n
-                r = { round( r_estimates[1,1], d = 3 )}; r2 = { round( r_estimates[1,2], d = 3 ) }")
-```
-
-
-## plot percent body fat by pbf_hat
-
-```{r}
-kids2 |> ggplot(aes(x = pbf_hat, y = percent_fat) ) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(method = "lm", se = FALSE, color = "blue") +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red", size = 0.75) +
-  theme_bw() +
-  labs(x = "Predicted Percent Body Fat", y = "Measured Percent Body Fat",
-       subtitle = "Correlation between predicted and measured percent body fat")
-```
-
-
-## cross-validation of the GAM model
-
-
-```{r}
-set.seed(1152025)
-idx <- sample.int(nrow(kids2), size = floor(0.8 * nrow(kids2)))
-train <- kids2[idx, ]
-test  <- kids2[-idx, ]
-
-fit_cv <- gam(
-  percent_fat ~
-    sex +
-    s(age, by = sex, k = 12) +
-    te(log_height, log_weight, by = sex, k = c(10, 10)),
-  data = train,
-  method = "REML"
-)
-
-test <- test %>%
-  mutate(pbf_hat = predict(fit_cv, newdata = ., type = "response"))
-
-cor(test$percent_fat, test$pbf_hat, use = "complete.obs")^2
-
-```
-
-
-## Estiamte error in pbf_hat at each age group, and then age and sex
-
-```{r}
-calc_error_stats <- function(data, ...) {
-  data %>%
-    mutate(
-      error = percent_fat - pbf_hat,
-      abs_error = abs(error) # Create this explicitly to get its SD later
-    ) %>%
-    group_by(...) %>%
-    summarise(
-      n = n(),
-      
-      # --- MAE & its Uncertainty ---
-      mae = mean(abs_error, na.rm = TRUE),
-      sd_abs_error = sd(abs_error, na.rm = TRUE), # SD of the absolute differences
-      se_mae = sd_abs_error / sqrt(n),            # Standard Error of the MAE
-      
-      # 95% CIs (using 1.96 for large N; use qt(0.975, n-1) if N is small)
-      mae_lower_ci = mae - (1.96 * se_mae),
-      mae_upper_ci = mae + (1.96 * se_mae),
-      
-      # --- Other Stats ---
-      rmse = sqrt(mean(error^2, na.rm = TRUE)),
-      sd_bias = sd(error, na.rm = TRUE), # SD of raw error (bias consistency)
-      
-      .groups = "drop"
-    )
-}
-
-# Usage:
-error_by_age     <- calc_error_stats(kids2, age)
-error_by_age = error_by_age |> mutate(sex = "all")
-error_by_age_sex <- calc_error_stats(kids2, age, sex)
-
-e = bind_rows(error_by_age, error_by_age_sex)
-```
-
-## plot MAE by age and sex
-
-```{r}
-e |> ggplot(aes(x = age, y = mae, color = sex)) +
-  geom_line(size = 1) +
-  geom_errorbar(aes(ymin = mae_lower_ci, ymax = mae_upper_ci), width = 0.2, size = 1) +
-  geom_point(size = 3) +
-  theme_bw() +
-  scale_color_manual(values = c("grey50", "grey80", "black")) +
-  scale_x_continuous(breaks = seq(2, 20, by = 1)) +
-  labs(x = "age (years)", y = "Mean Absolute Error (MAE)",
-       subtitle = "Prediction error of percent body fat model across childhood and adolescence")
-```
-
-
-## make a Height Growth Velocity plot
-
-### estimate growth velocity (cm/year) for females
-```{r, }
-library(qgam)
-
-fit025 = qgam(wsi_sex ~ s(age, bs = "tp"), qu = 0.025, data = kids_wsi )
-fit25 = qgam(wsi_sex ~ s(age, bs = "tp"), qu = 0.25, data = kids_wsi )
-fit50 = qgam(wsi_sex ~ s(age, bs = "tp"), qu = 0.50, data = kids_wsi )
-fit75 = qgam(wsi_sex ~ s(age, bs = "tp"), qu = 0.75, data = kids_wsi )
-fit975 = qgam(wsi_sex ~ s(age, bs = "tp"), qu = 0.957, data = kids_wsi )
-
-# 1. Create a sequence of ages (the x-axis range)
-grid_data <- tibble(
-  age = seq(min(kids_wsi$age), max(kids_wsi$age), length.out = 200)
-)
-
-# 2. Add predictions from your three models to this grid
-grid_data <- grid_data |> 
-  mutate(
-    q025 = predict(fit025, newdata = grid_data),
-    q25 = predict(fit25, newdata = grid_data),
-    q50 = predict(fit50, newdata = grid_data),
-    q75 = predict(fit75, newdata = grid_data),
-    q975 = predict(fit975, newdata = grid_data)
-  )
-
-```
-
-```{r, fig.width = 10, fig.height = 4}
-kids_wsi |> 
-  ggplot(aes(x = age, y = wsi_sex)) +
-  geom_point(alpha = 0.2) + # Added alpha to see the lines better
-  
-  # --- Standard Mean GAM (from your original code) ---
-  # geom_smooth(method = "gam", se = FALSE, color = "green", formula = y ~ s(x, bs = "tp")) +
-  
-  # --- Quantile Lines (The new part) ---
-  # We use 'data = grid_data' and 'inherit.aes = FALSE' to avoid looking for 'sex'
-  geom_line(data = grid_data, aes(x = age, y = q025), color = "red3", linetype = "dashed", size = 1) +
-  geom_line(data = grid_data, aes(x = age, y = q25), color = "purple", linetype = "dashed", size = 1) +
-  geom_line(data = grid_data, aes(x = age, y = q50), color = "blue", size = 1) + # Median
-  geom_line(data = grid_data, aes(x = age, y = q75), color = "purple", linetype = "dashed", size = 1) +
-  geom_line(data = grid_data, aes(x = age, y = q975), color = "red3", linetype = "dashed", size = 1) +
-  
-  facet_wrap(~sex) +
-  theme_bw()
-```
-
-
-```{r}
-
-
-hgv_data <- kids_wsi |>
-  filter(age >= 2, age <= 20) |> # Start at 3 so we have a baseline for age 4
-  group_by(sex, age) |>
-  summarize(
-    median_height = median(height, na.rm = TRUE) * 100, 
-    .groups = "drop"
-  
-  ) |>
-  arrange(sex, age) |> 
-  group_by(sex) |>
-  mutate(
-    # Attained Velocity Calculation:
-    # Current Height (Age A) minus Previous Height (Age A-1)
-    growthvelocity = median_height - lag(median_height)
-  ) |>
+fig5a <- kids_dxa |>
+  group_by(age, sex) |>
+  group_modify(~ cor_summary(.x, "height_m", "pbf")) |>
   ungroup() |>
-  # Filter to 4-19 to match your desired output
-  # (Age 3 will be NA anyway because there is no Age 2 data to subtract)
-  filter(age >= 3, age <= 19) |> 
-  mutate(sex_label = ifelse(sex == "f", "Females", "Males"))
+  mutate(signif = p < opts$p_star)
 
-head(hgv_data)
+fig5a |> select(age, sex, r) |> pivot_wider(names_from = sex, values_from = r) |> knitr::kable(digits = 3)
 ```
 
+### Sex-adjusted partial correlation (Box; youth part of Figure 2B)
 
 ```{r}
-## Add a stratification by PBF or WSI
-kids2 <- kids2 |>
-  group_by(sex) |>
-  mutate(
-    pbf_grp = ntile(percent_fat, 3),
-    pbf_grp = factor(pbf_grp, levels = 1:3, labels = c("Low %fat", "Mid %fat", "High %fat"))
-  ) |>
-  ungroup()
+hf_youth <- hf_corr(kids_dxa, "age")
+hf_youth |> select(age, n, r, lo, hi, p_int) |> knitr::kable(digits = 3)
+
+record_stat("box_partial_r_8_11_min", min(hf_youth$r[hf_youth$age %in% 8:11]))
+record_stat("box_partial_r_8_11_max", max(hf_youth$r[hf_youth$age %in% 8:11]))
 ```
 
+### Figure 5B: mean %BF by height quartile within age and sex
+
+Height quartiles are formed within each age × sex stratum of the DXA sample. CIs are 95%
+bootstrap percentile intervals (`r opts$n_boot` resamples).
 
 ```{r}
-plotk2 <- hgv_data |> 
-  ggplot(aes(x = age, y = growthvelocity, color = sex_label)) +
-  geom_point(size = 4) +
-  # Using a GAM with a cubic spline (bs="cs") handles the curve smoothly
-  geom_smooth(method = "gam", se = FALSE, size = 1.25, formula = y ~ s(x, bs = "cs")) +
-  
-  theme_bw() +
-  
-  # Grid lines at every integer age
-  scale_x_continuous(breaks = seq(min(hgv_data$age), max(hgv_data$age), by = 1)) + 
-  
-  # Colors
-  scale_color_manual(
-    name = "Sex",
-    values = c("Females" = "grey50", "Males" = "grey80")
-  ) +
-  
-  labs(
-    x = "age (years)", 
-    y = "growth velocity (cm/year)",
-    subtitle = "height growth velocity"
-  )
+set.seed(opts$seed)
+fig5b <- kids_dxa |>
+  group_by(age, sex) |>
+  mutate(height_q = ntile(height_m, 4)) |>
+  group_by(age, sex, height_q) |>
+  reframe(boot_mean_ci(pbf)) |>
+  mutate(height_q = factor(height_q, labels = c("Q1 (shortest)", "Q2", "Q3", "Q4 (tallest)")))
 
-plotk2
+save_result(list(r_height_pbf = fig5a, quartiles = fig5b), "res_fig5")
+```
+
+## Figure 6: how well do BMI, TMI and Benn's index explain %BF?
+
+R² is the squared Pearson correlation of %BF with each index, within age × sex. One paired
+bootstrap (`r opts$n_boot` resamples) per stratum gives the CIs for each R² and for each
+difference from Benn's index.
+
+```{r}
+set.seed(opts$seed)
+indices <- c(BMI = "bmi", TMI = "tmi", Benn = "benn")
+
+r2_res <- kids_dxa |>
+  group_by(age, sex) |>
+  group_map(~ r2_boot(.x, indices, ref = "Benn") |>
+              map(mutate, age = .y$age, sex = .y$sex), .keep = FALSE)
+
+fig6a <- map_dfr(r2_res, "r2")   |> mutate(index = factor(index, levels = names(indices)))
+fig6b <- map_dfr(r2_res, "diff")
+
+### Figure 6C: does the ΔR² track the height–%BF correlation (Figure 5A)?
+fig6c <- fig6b |> inner_join(fig5a |> select(age, sex, r_height_pbf = r), by = join_by(age, sex))
+dep_r <- fig6c |> group_by(index) |> summarise(r = cor(r_height_pbf, delta_r2), n = n())
+dep_r |> knitr::kable(digits = 3)
+
+record_stat("fig6_r_bmi_benn", dep_r$r[dep_r$index == "BMI − Benn"])
+record_stat("fig6_r_tmi_benn", dep_r$r[dep_r$index == "TMI − Benn"])
+
+# participants per sex (the n quoted in the Fig 5 and Fig 6 legends)
+fig6a |> distinct(age, sex, n) |> count(sex, wt = n) |> knitr::kable()
+
+save_result(list(r2 = fig6a, diff = fig6b, dependence = fig6c, dependence_r = dep_r), "res_fig6")
+```
+
+## Figure 7: growth and weight–stature indices by age
+
+Thin-plate GAM smooths of each measure on age, by sex, fit to all participants. Only the
+smooths are saved (aggregate).
+
+```{r}
+fig7 <- kids |>
+  transmute(sex, age, `Height (cm)` = height_cm, `Weight (kg)` = weight_kg,
+            `BMI (kg/m²)` = bmi, `TMI (kg/m³)` = tmi, `Benn's index (kg/mᵝ)` = benn) |>
+  pivot_longer(-c(sex, age), names_to = "measure", values_to = "value") |>
+  mutate(measure = fct_inorder(measure)) |>
+  smooth_by("age", "value", group = c("measure", "sex")) |>
+  rename(age = x, value = y) |>
+  mutate(panel = if_else(measure %in% c("Height (cm)", "Weight (kg)"), "A", "B"))
+
+save_result(fig7, "res_fig7")
+```
+
+## Compositional stability in youth (Figure 8B; youth part of Figure 2C)
+
+### Sex-specific curves by single year of age (Figure 8B)
+
+```{r}
+curves_youth <- fit_stratum_curves(kids_dxa |> mutate(age_grp = factor(age)), "age_grp")
+pbf25_youth  <- pbf_at_ref(curves_youth)
+
+pbf25_youth |> select(sex, age_grp, pbf) |> pivot_wider(names_from = sex, values_from = pbf) |>
+  knitr::kable(digits = 1)
+
+get_pbf <- function(s, a) pbf25_youth |> filter(sex == s, age_grp == a) |> pull(pbf)
+record_stat("youth_pbf25_m8",      get_pbf("Males", 8))
+record_stat("youth_pbf25_m20",     get_pbf("Males", 20))
+record_stat("youth_pbf25_m_delta", get_pbf("Males", 20) - get_pbf("Males", 8))
+record_stat("youth_pbf25_f8",      get_pbf("Females", 8))
+record_stat("youth_pbf25_f20",     get_pbf("Females", 20))
+record_stat("youth_pbf25_f_delta", get_pbf("Females", 20) - get_pbf("Females", 8))
+record_stat("box_pbf25_age8",   mean(c(get_pbf("Females", 8), get_pbf("Males", 8))), "mean of F and M")
+record_stat("box_pbf25_f_1920", mean(c(get_pbf("Females", 19), get_pbf("Females", 20))), "mean of ages 19 and 20")
+record_stat("box_pbf25_m_1920", mean(c(get_pbf("Males", 19), get_pbf("Males", 20))), "mean of ages 19 and 20")
+
+pbf_sweep_youth <- pbf_at_ref(curves_youth, opts$ref_bmi_sweep)
+save_result(list(curves = curves_youth, pbf25 = pbf25_youth, sweep = pbf_sweep_youth), "res_youth_curves")
+```
+
+### Sex-adjusted %BF at BMI 25 (youth part of Figure 2C)
+
+```{r}
+curves_youth_adj <- fit_stratum_curves(kids_dxa |> mutate(age_grp = factor(age)), "age_grp", adjust_sex = TRUE)
+pbf25_youth_adj  <- pbf_at_ref(curves_youth_adj)
+
+save_result(list(beta = beta_adj, hf = hf_youth, pbf25 = pbf25_youth_adj), "res_youth_strata")
+```
+
+### Mean BMI and %BF at ages 8 and 20 (text: compositional ¶3; Figure 9 legend)
+
+```{r}
+means_8_20 <- kids_dxa |>
+  filter(age %in% c(8, 20)) |>
+  group_by(sex, age) |>
+  summarise(n = n(), bmi = mean(bmi), pbf = mean(pbf), .groups = "drop")
+means_8_20 |> knitr::kable(digits = 1)
+
+chg <- function(s, v) diff(means_8_20[[v]][means_8_20$sex == s])
+record_stat("youth_bmi_change_8_20_f", chg("Females", "bmi"))
+record_stat("youth_bmi_change_8_20_m", chg("Males",   "bmi"))
+record_stat("youth_pbf_change_8_20_f", chg("Females", "pbf"))
+record_stat("youth_pbf_change_8_20_m", chg("Males",   "pbf"))
+record_stat("fig9_boys_bmi_age8",  means_8_20$bmi[means_8_20$sex == "Males" & means_8_20$age == 8])
+record_stat("fig9_boys_bmi_age20", means_8_20$bmi[means_8_20$sex == "Males" & means_8_20$age == 20])
+```
+
+## Figure 10: deriving BMI-for-age percentiles (illustration, males 2–19 y)
+
+Unweighted empirical percentiles within single-year age groups; smoothing across age is done
+in the figure script. Ages 2–19 reproduce the "112 children (0.57%)" in the legend
+(DISCREPANCIES B10).
+
+```{r}
+pcts <- c(0.03, 0.05, 0.10, 0.25, 0.50, 0.75, 0.85, 0.90, 0.95, 0.97)
+pct_labels <- c("3rd", "5th", "10th", "25th", "50th", "75th", "85th", "90th", "95th", "97th")
+
+males_2_19 <- kids |> filter(sex == "Males", age >= 2, age <= 19)
+
+fig10_pct <- males_2_19 |>
+  group_by(age) |>
+  reframe(percentile = pct_labels, p = pcts, bmi = quantile(bmi, pcts), n = n()) |>
+  mutate(percentile = factor(percentile, levels = pct_labels))
+
+y_cap <- 43
+record_stat("fig10_n_above_43",   sum(males_2_19$bmi > y_cap))
+record_stat("fig10_pct_above_43", 100 * mean(males_2_19$bmi > y_cap))
+
+save_result(list(percentiles = fig10_pct, n = nrow(males_2_19), y_cap = y_cap), "res_fig10")
+```
+
+## Figure 11 and the z-score example: the CDC 2022 BMI-for-age reference
+
+```{r}
+cdc <- read_csv(paths$cdc_lms, show_col_types = FALSE) |>
+  filter(agemos >= 24) |>
+  mutate(sex = factor(if_else(sex == 2, "Females", "Males"), levels = c("Females", "Males")),
+         age = agemos / 12)
+
+record_stat("fig11_L_max", max(cdc$L))
+record_stat("fig11_L_min", min(cdc$L))
+
+fig11 <- list(
+  lms = cdc |> select(sex, agemos, age, L, M, S),
+  percentiles = cdc |>
+    select(sex, agemos, age, P5, P25, P50, P75, P85, P95, pct120ofP95) |>
+    pivot_longer(-c(sex, agemos, age), names_to = "percentile", values_to = "bmi") |>
+    mutate(percentile = factor(percentile,
+                               levels = c("P5", "P25", "P50", "P75", "P85", "P95", "pct120ofP95"),
+                               labels = c("5th", "25th", "50th", "75th", "85th", "95th", "120% of 95th")))
+)
+save_result(fig11, "res_fig11")
+```
+
+### z-score compression: a 9-year-old boy, 130 cm tall
+
+The CDC row for males at 108.5 months (age 9.0 y); weights in pairs 8 kg apart.
+
+```{r}
+row9 <- cdc |> filter(sex == "Males", agemos == 108.5)
+z_example <- tibble(weight_kg = c(34, 42, 51, 59, 77, 85)) |>
+  mutate(bmi = weight_kg / 1.30^2, z = lms_z(bmi, row9$L, row9$M, row9$S))
+z_example |> knitr::kable(digits = 2)
+
+iwalk(z_example$bmi, ~ record_stat(paste0("z_bmi_", .y), .x))
+iwalk(z_example$z,   ~ record_stat(paste0("z_", .y), .x))
+record_stat("z_diff_healthy", round(z_example$z[2], 2) - round(z_example$z[1], 2), "difference of the rounded z-scores, as in the text")
+record_stat("z_diff_obese",   round(z_example$z[4], 2) - round(z_example$z[3], 2), "difference of the rounded z-scores")
+record_stat("z_diff_severe",  round(z_example$z[6], 2) - round(z_example$z[5], 2), "difference of the rounded z-scores")
+record_stat("z_max_age9",     lms_zmax(row9$L, row9$S))
+```
+
+## Save in-text statistics
+
+```{r}
+save_stats("03_kids")
+```
+
+## Session info
+
+```{r}
+sessioninfo::session_info()
 ```

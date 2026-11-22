@@ -1,0 +1,155 @@
+---
+title: "Youth and adults together: the three BMI assumptions across the life course"
+author: "David A Hughes"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+<!--
+---- File Metadata ----
+Title: 04_kids_and_adults.Rmd — analyses spanning both cohorts
+Author: David A Hughes
+Email: david.hughes@pbrc.edu
+Date: 20 Nov 2026
+Version: 2.0
+
+Input : data/derived/res_adult_strata.rds, res_adult_curves.rds (02_adults.Rmd)
+        data/derived/res_youth_strata.rds, res_youth_curves.rds (03_kids.Rmd)
+        data/derived/adults.rds, kids_dxa.rds (01_data_wrangling.R; Hattori means)
+Output: data/derived/res_fig2.rds   life-course β, partial r, %BF at BMI 25
+        data/derived/res_fig8c.rds  drift in %BF at fixed BMI, youth vs adults
+        data/derived/res_fig9.rds   Hattori chart stratum means
+        results/stats/reproduced_04_kids_and_adults.csv
+-->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+source("R/setup.R")
+```
+
+## Read in the stratum results
+
+```{r}
+adult_strata <- read_result("res_adult_strata")
+youth_strata <- read_result("res_youth_strata")
+adult_curves <- read_result("res_adult_curves")
+youth_curves <- read_result("res_youth_curves")
+```
+
+## Figure 2: the three assumptions across the life course
+
+Every estimate is sex-adjusted. Youth strata are single years (2–20 for β; 8–20 for the
+DXA panels) and adult strata are decades. Points sit at the median age of each stratum.
+
+```{r}
+### stack youth and adult estimates for one panel
+life_course <- function(youth, adult, youth_stratum, value, panel) {
+  bind_rows(
+    youth |> transmute(cohort = lbl_cohort[["youth"]],  stratum = as.character(.data[[youth_stratum]]),
+                       n, age_mid, est = .data[[value]], lo, hi),
+    adult |> transmute(cohort = lbl_cohort[["adults"]], stratum = as.character(age_decade),
+                       n, age_mid, est = .data[[value]], lo, hi)
+  ) |>
+    mutate(panel = panel, .before = 1)
+}
+
+fig2 <- bind_rows(
+  ### Figure 2A: allometric exponent β by age
+  life_course(youth_strata$beta,  adult_strata$beta,  "age",     "beta", "A"),
+  ### Figure 2B: partial correlation of height with %BF
+  life_course(youth_strata$hf,    adult_strata$hf,    "age",     "r",    "B"),
+  ### Figure 2C: %BF at BMI 25 (sex-adjusted GAM)
+  life_course(youth_strata$pbf25, adult_strata$pbf25, "age_grp", "pbf",  "C")
+)
+
+adult_mean_pbf25 <- fig2 |> filter(panel == "C", cohort == lbl_cohort[["adults"]]) |> pull(est) |> mean()
+cli::cli_alert_info("Mean %BF at BMI 25 across adult strata (Fig 2C dashed line): {round(adult_mean_pbf25, 1)}")
+
+fig2 |> filter(cohort == lbl_cohort[["adults"]]) |> knitr::kable(digits = 3)
+save_result(list(estimates = fig2, adult_mean_pbf25 = adult_mean_pbf25), "res_fig2")
+```
+
+## Figure 8C: drift in %BF at fixed BMI, youth vs adults
+
+At each reference BMI (20–35), %BF from the sex-specific stratum curves (Figure 8A–B) is
+regressed on stratum age (unweighted OLS). The x position is the decade midpoint for adults
+(`midpts()`: "70+" = 75, see DISCREPANCIES Q6) and the single year of age for youth. The
+slope is the drift in percentage points per year.
+
+```{r}
+sweep <- bind_rows(
+  adult_curves$sweep |> transmute(cohort = lbl_cohort[["adults"]],    sex, stratum = as.character(age_decade), ref_bmi, pbf),
+  youth_curves$sweep |> transmute(cohort = lbl_cohort[["youth_dxa"]], sex, stratum = as.character(age_grp),    ref_bmi, pbf)
+) |>
+  mutate(age_x = midpts(stratum))
+
+drift <- drift_sweep(sweep)
+drift |> filter(ref_bmi == 25) |> knitr::kable(digits = 3)
+```
+
+### Average drift over reference BMIs where every stratum contributes
+
+```{r}
+drift_mean <- drift |>
+  filter(full_support) |>
+  group_by(cohort, sex) |>
+  summarise(n_ref = n(), mean_pp_per_year = mean(pp_per_year),
+            min = min(pp_per_year), max = max(pp_per_year), .groups = "drop")
+drift_mean |> knitr::kable(digits = 3)
+
+dm <- function(c, s) drift_mean |> filter(cohort == lbl_cohort[[c]], sex == s) |> pull(mean_pp_per_year)
+record_stat("drift_youth_m", dm("youth_dxa", "Males"))
+record_stat("drift_adult_m", dm("adults",    "Males"))
+record_stat("drift_fold_m",  abs(dm("youth_dxa", "Males")   / dm("adults", "Males")))
+record_stat("drift_youth_f", dm("youth_dxa", "Females"))
+record_stat("drift_adult_f", dm("adults",    "Females"))
+record_stat("drift_fold_f",  abs(dm("youth_dxa", "Females") / dm("adults", "Females")))
+adult_full <- drift |> filter(cohort == lbl_cohort[["adults"]], full_support) |> pull(pp_per_year)
+record_stat("adult_drift_range_min", min(adult_full), "lowest adult drift over reference BMIs 20–35, both sexes")
+record_stat("adult_drift_range_max", max(adult_full), "highest adult drift over reference BMIs 20–35, both sexes")
+record_stat("box_adult_drift",    mean(c(dm("adults", "Females"), dm("adults", "Males"))), "mean of the sex means")
+record_stat("impact_adult_drift", mean(c(dm("adults", "Females"), dm("adults", "Males"))), "mean of the sex means")
+record_stat("impact_youth_drift_max",
+            max(abs(drift$pp_per_year[drift$cohort == lbl_cohort[["youth_dxa"]] & drift$sex == "Males"])),
+            "largest |drift| in boys over reference BMIs 20–35")
+
+save_result(list(drift = drift, drift_mean = drift_mean, sweep = sweep), "res_fig8c")
+```
+
+## Figure 9: Hattori chart
+
+Mean fat-free mass index (FFMI) and fat mass index (FMI) for each sex × age stratum: youth
+in single years (8–20) and adults in 5-year bands (21–24 … 80+). Only participants with DXA.
+
+```{r}
+adults_dxa <- read_result("adults") |> filter(has_dxa)
+kids_dxa   <- read_result("kids_dxa")
+
+hattori <- bind_rows(
+  kids_dxa   |> mutate(cohort = lbl_cohort[["youth_dxa"]], stratum = as.character(age)),
+  adults_dxa |> mutate(cohort = lbl_cohort[["adults"]],    stratum = as.character(age_5y))
+) |>
+  group_by(cohort, sex, stratum) |>
+  summarise(n = n(), age_mid = median(age), ffmi = mean(ffmi), fmi = mean(fmi),
+            bmi = mean(bmi), pbf = mean(pbf), .groups = "drop") |>
+  arrange(sex, age_mid)
+
+hattori |> count(cohort, sex, wt = n, name = "participants") |> knitr::kable()
+save_result(hattori, "res_fig9")
+```
+
+## Save in-text statistics
+
+```{r}
+save_stats("04_kids_and_adults")
+```
+
+## Session info
+
+```{r}
+sessioninfo::session_info()
+```

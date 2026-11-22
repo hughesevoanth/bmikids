@@ -1,0 +1,22 @@
+# local configuration
+.Renviron
+.Rhistory
+.RData
+.Rproj.user/
+.DS_Store
+
+# data and results are never committed (NHANES files are downloaded by 00_nhanes_fetch_data.R)
+data/
+results/
+*.xpt
+*.rds
+
+# knitted reports: only the copies in reports/ are committed
+*.html
+!reports/*.html
+*_cache/
+*_files/
+
+# working documents about the draft manuscript (kept locally, not published)
+PLAN.md
+DISCREPANCIES.md
