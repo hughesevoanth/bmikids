@@ -46,6 +46,7 @@ steps <- c(
   "Table 2"                         = script("tables/tab02_beta_by_age.R"),
   set_names(map_chr(sprintf("figures/fig%02d_", 1:11), \(p) script(fs::dir_ls("figures", regexp = p))),
             paste("Figure", 1:11)),
+  "Graphical abstract"              = script("figures/graphical_abstract.R"),
   "Source-data workbook"            = script("figures/make_source_data_workbook.R"),
   "In-text number check"            = script("R/check_in_text_stats.R"),
   "Sample-size check"               = script("R/check_sample_sizes.R")

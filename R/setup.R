@@ -189,7 +189,10 @@ scale_x_lifecourse <- function(limits, ...) {
                      ...)
 }
 
-#' Save a figure as vector PDF (cairo) and 600-dpi PNG (ragg)
+#' Save a figure as PDF and EPS (vector, cairo) and as TIFF and PNG (600 dpi, ragg)
+#'
+#' EPS cannot hold transparency: semi-transparent layers are drawn as 600-dpi images
+#' inside the EPS (`fallback_resolution`). TIFF uses lossless LZW compression.
 #'
 #' @param plot   ggplot / patchwork object.
 #' @param name   File stem, e.g. "Figure1".
@@ -208,10 +211,16 @@ save_figure <- function(plot, name, width, height) {
     fs::file_delete(tmp)
     dest
   }
-  pdf_file <- write_checked(".pdf", cairo_pdf)
-  png_file <- write_checked(".png", ragg::agg_png, res = 600)
-  cli::cli_alert_success("Saved {.file {pdf_file}} ({fs::file_size(pdf_file)}) and .png ({fs::file_size(png_file)})")
-  invisible(c(pdf_file, png_file))
+  files <- c(
+    pdf  = write_checked(".pdf",  cairo_pdf),                                  # vector; for co-authors
+    eps  = write_checked(".eps",  cairo_ps, fallback_resolution = 600),        # vector; journal submission
+    # raster sizes are set by ggsave()'s `dpi` (its default of 300 overrides a device `res`)
+    tiff = write_checked(".tiff", ragg::agg_tiff, dpi = 600, compression = "lzw"),  # journal submission
+    png  = write_checked(".png",  ragg::agg_png,  dpi = 600)                   # quick viewing
+  )
+  sizes <- paste(sprintf("%s %s", toupper(names(files)), format(fs::file_size(files))), collapse = ", ")
+  cli::cli_alert_success("Saved {name}: {sizes}")
+  invisible(files)
 }
 
 #' Write the source data for a figure, then read it back for plotting

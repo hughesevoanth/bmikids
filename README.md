@@ -60,7 +60,8 @@ its own: every script loads it (packages, paths, options, plot theme, shared fun
 | 3 | `03_kids.Rmd` | Youth analyses (Table 2; Figures 3–7, 10, 11; youth strata for Figures 2 and 8; CDC z-score example) |
 | 4 | `04_kids_and_adults.Rmd` | Analyses spanning both cohorts (Figure 2, drift comparison for Figure 8C, Hattori chart for Figure 9) |
 | 5 | `tables/tab02_beta_by_age.R` | `results/tables/Table2.{csv,docx}` and a cell-by-cell comparison with the manuscript |
-| 6 | `figures/figNN_*.R` | `results/figures/FigureN.pdf` (vector) and `.png` (600 dpi), and `results/source_data/SourceData_FigN.csv` |
+| 6 | `figures/figNN_*.R` | `results/figures/FigureN.{pdf,eps}` (vector) and `.{tiff,png}` (600 dpi), and `results/source_data/SourceData_FigN.csv` |
+| 6b | `figures/graphical_abstract.R` | `results/figures/graphical_abstract.{eps,tiff,pdf,png}` (50 × 60 mm, the journal's graphical-abstract size) and `results/source_data/SourceData_GraphicalAbstract.csv` |
 | 7 | `figures/make_source_data_workbook.R` | `results/source_data/SourceData_AllFigures.xlsx` (README sheet + one sheet per figure) |
 | 8 | `R/check_in_text_stats.R` | `results/stats/in_text_stats.csv` (and `.xlsx`, mismatches highlighted): every number quoted in the manuscript next to the value the code reproduces |
 | 9 | `R/check_sample_sizes.R` | `results/stats/sample_size_check.csv`: recounts the samples from the raw NHANES files with independent code and checks that every figure and table uses the right one (all participants, or the DXA subset); stops if any count disagrees |
@@ -180,7 +181,7 @@ holds the numbers as quoted in the current draft, which uses the corrected analy
 ```
 00_nhanes_fetch_data.R  01_data_wrangling.R  02_adults.Rmd  03_kids.Rmd  04_kids_and_adults.Rmd
 run_all.R  renv.lock  bmikids.Rproj  LICENSE
-figures/    one script per figure + make_source_data_workbook.R
+figures/    one script per figure + graphical_abstract.R + make_source_data_workbook.R
 tables/     tab02_beta_by_age.R
 R/          setup.R (loaded by every script), check_in_text_stats.R, check_sample_sizes.R
 stats/      manuscript_values.csv, manuscript_table2.csv (numbers as quoted in the manuscript)
